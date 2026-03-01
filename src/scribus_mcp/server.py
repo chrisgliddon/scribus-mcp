@@ -2,6 +2,7 @@
 
 import atexit
 import logging
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -103,7 +104,7 @@ def define_color(
 
     """
     client = _get_client()
-    params = {"name": name, "mode": mode}
+    params: dict[str, Any] = {"name": name, "mode": mode}
     if mode == "cmyk":
         params.update({"c": c, "m": m, "y": y, "k": k})
     else:
@@ -147,7 +148,7 @@ def place_text(
 
     """
     client = _get_client()
-    params = {"x": x, "y": y, "w": w, "h": h, "text": text}
+    params: dict[str, Any] = {"x": x, "y": y, "w": w, "h": h, "text": text}
     if font is not None:
         params["font"] = font
     if font_size is not None:
@@ -194,7 +195,7 @@ def place_image(
 
     """
     client = _get_client()
-    params = {
+    params: dict[str, Any] = {
         "x": x,
         "y": y,
         "w": w,
@@ -247,7 +248,7 @@ def draw_shape(
 
     """
     client = _get_client()
-    params = {"shape": shape}
+    params: dict[str, Any] = {"shape": shape}
 
     if shape == "line":
         params.update(
@@ -312,7 +313,7 @@ def modify_object(
 
     """
     client = _get_client()
-    params: dict = {"name": name}
+    params: dict[str, Any] = {"name": name}
 
     for key, val in [
         ("x", x),
@@ -382,7 +383,7 @@ def export_pdf(
 
     """
     client = _get_client()
-    params: dict = {"file_path": file_path, "quality": quality}
+    params: dict[str, Any] = {"file_path": file_path, "quality": quality}
     if pdf_version is not None:
         params["pdf_version"] = pdf_version
     if pages is not None:
