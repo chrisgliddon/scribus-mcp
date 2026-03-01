@@ -40,7 +40,7 @@ Then use the Docker-based MCP config examples below — no local Scribus or uv n
 
 ## Configure in Claude Code
 
-Add to `.mcp.json` in the project root, or `~/.claude/.mcp.json` for global access across all sessions.
+Add to `.mcp.json` in the project root, or `~/.claude.json` for global access across all sessions.
 
 **Native (uv) — macOS / Linux:**
 
