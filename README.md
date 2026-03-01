@@ -14,7 +14,11 @@ Scribus runs headless as a persistent subprocess. The bridge script executes ins
 
 - **Python 3.10+**
 - **[uv](https://docs.astral.sh/uv/)** package manager
-- **Scribus** installed at `/Applications/Scribus.app/Contents/MacOS/Scribus` (macOS) or `/usr/bin/scribus` (Linux), or set `SCRIBUS_EXECUTABLE` env var
+- **Scribus** installed at one of:
+  - macOS: `/Applications/Scribus.app/Contents/MacOS/Scribus`
+  - Linux: `/usr/bin/scribus`
+  - Windows: `C:\Program Files\Scribus 1.6\Scribus.exe`
+  - Or set `SCRIBUS_EXECUTABLE` env var (see [Custom Scribus Path](#custom-scribus-path))
 
 ## Setup
 
@@ -24,9 +28,21 @@ cd scribus-mcp
 uv sync
 ```
 
+## Docker
+
+If you don't want to install Scribus or uv locally, build the Docker image:
+
+```bash
+docker build -t scribus-mcp .
+```
+
+Then use the Docker-based MCP config examples below — no local Scribus or uv needed.
+
 ## Configure in Claude Code
 
-Add to `.mcp.json` (project root or `~/.claude/.mcp.json` for global):
+Add to `.mcp.json` in the project root, or `~/.claude/.mcp.json` for global access across all sessions.
+
+**Native (uv) — macOS / Linux:**
 
 ```json
 {
@@ -39,9 +55,40 @@ Add to `.mcp.json` (project root or `~/.claude/.mcp.json` for global):
 }
 ```
 
+**Native (uv) — Windows:**
+
+```json
+{
+  "mcpServers": {
+    "scribus": {
+      "command": "uv",
+      "args": ["--directory", "C:\\path\\to\\scribus-mcp", "run", "scribus-mcp"]
+    }
+  }
+}
+```
+
+**Docker (cross-platform):**
+
+```json
+{
+  "mcpServers": {
+    "scribus": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "scribus-mcp"]
+    }
+  }
+}
+```
+
 ## Configure in Claude Desktop
 
-Add to `claude_desktop_config.json`:
+Add a `"scribus"` entry to the `mcpServers` object in your config file:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+**Native (uv) — macOS / Linux:**
 
 ```json
 {
@@ -49,6 +96,32 @@ Add to `claude_desktop_config.json`:
     "scribus": {
       "command": "uv",
       "args": ["--directory", "/path/to/scribus-mcp", "run", "scribus-mcp"]
+    }
+  }
+}
+```
+
+**Native (uv) — Windows:**
+
+```json
+{
+  "mcpServers": {
+    "scribus": {
+      "command": "uv",
+      "args": ["--directory", "C:\\path\\to\\scribus-mcp", "run", "scribus-mcp"]
+    }
+  }
+}
+```
+
+**Docker (cross-platform):**
+
+```json
+{
+  "mcpServers": {
+    "scribus": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "scribus-mcp"]
     }
   }
 }
@@ -92,8 +165,22 @@ npx @modelcontextprotocol/inspector uv run scribus-mcp
 
 If Scribus isn't in a standard location:
 
+**macOS / Linux (bash/zsh):**
+
 ```bash
 export SCRIBUS_EXECUTABLE=/path/to/scribus
+```
+
+**Windows (Command Prompt):**
+
+```cmd
+set SCRIBUS_EXECUTABLE=C:\path\to\Scribus.exe
+```
+
+**Windows (PowerShell):**
+
+```powershell
+$env:SCRIBUS_EXECUTABLE = "C:\path\to\Scribus.exe"
 ```
 
 ## How It Works
@@ -106,4 +193,4 @@ export SCRIBUS_EXECUTABLE=/path/to/scribus
 
 ## License
 
-GPL-2.0 — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE)
