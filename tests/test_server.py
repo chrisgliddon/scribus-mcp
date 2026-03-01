@@ -26,26 +26,41 @@ def mock_client():
     mock.send_command.return_value = {}
     mock.save_document.return_value = None
 
-    with patch.object(server_module, "_client", mock):
-        with patch.object(server_module, "_get_client", return_value=mock):
-            yield mock
+    with (
+        patch.object(server_module, "_client", mock),
+        patch.object(server_module, "_get_client", return_value=mock),
+    ):
+        yield mock
 
 
 class TestCreateDocument:
     def test_defaults(self, mock_client):
         mock_client.send_command.return_value = {
-            "width": 210, "height": 297, "unit": "mm", "pages": 1,
+            "width": 210,
+            "height": 297,
+            "unit": "mm",
+            "pages": 1,
         }
         result = create_document()
         assert "210x297mm" in result
-        mock_client.send_command.assert_called_once_with("create_document", {
-            "width": 210, "height": 297, "margins": 20,
-            "unit": "mm", "pages": 1, "orientation": 0,
-        })
+        mock_client.send_command.assert_called_once_with(
+            "create_document",
+            {
+                "width": 210,
+                "height": 297,
+                "margins": 20,
+                "unit": "mm",
+                "pages": 1,
+                "orientation": 0,
+            },
+        )
 
     def test_custom_params(self, mock_client):
         mock_client.send_command.return_value = {
-            "width": 100, "height": 200, "unit": "pt", "pages": 3,
+            "width": 100,
+            "height": 200,
+            "unit": "pt",
+            "pages": 3,
         }
         result = create_document(width=100, height=200, unit="pt", pages=3)
         assert "100x200pt" in result
@@ -74,8 +89,11 @@ class TestPlaceText:
 
     def test_with_styling(self, mock_client):
         mock_client.send_command.return_value = {"name": "text_2"}
-        result = place_text(
-            10, 20, 100, 50,
+        place_text(
+            10,
+            20,
+            100,
+            50,
             text="Styled",
             font="Arial Regular",
             font_size=14,
@@ -166,3 +184,102 @@ class TestRunScript:
         mock_client.send_command.return_value = {"result": None}
         result = run_script("scribus.gotoPage(1)")
         assert "successfully" in result
+
+
+# ---------------------------------------------------------------------------
+# Edge-case tests
+# ---------------------------------------------------------------------------
+
+
+class TestCreateDocumentEdgeCases:
+    def test_landscape_orientation(self, mock_client):
+        mock_client.send_command.return_value = {
+            "width": 297,
+            "height": 210,
+            "unit": "mm",
+            "pages": 1,
+        }
+        create_document(width=297, height=210, orientation=1)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["orientation"] == 1
+
+
+class TestPlaceTextEdgeCases:
+    def test_empty_text_no_preview(self, mock_client):
+        mock_client.send_command.return_value = {"name": "text_1"}
+        result = place_text(0, 0, 100, 50, text="")
+        assert "with text:" not in result
+
+    def test_long_text_truncated(self, mock_client):
+        mock_client.send_command.return_value = {"name": "text_1"}
+        long_text = "A" * 60
+        result = place_text(0, 0, 100, 50, text=long_text)
+        assert "..." in result
+
+
+class TestDrawShapeEdgeCases:
+    def test_ellipse_shape(self, mock_client):
+        mock_client.send_command.return_value = {"name": "ellipse_1", "shape": "ellipse"}
+        result = draw_shape("ellipse", x=10, y=20, w=50, h=50)
+        assert "ellipse" in result
+
+    def test_line_defaults(self, mock_client):
+        mock_client.send_command.return_value = {"name": "line_1", "shape": "line"}
+        draw_shape("line")
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["x1"] == 0
+        assert call_params["y1"] == 0
+        assert call_params["x2"] == 100
+        assert call_params["y2"] == 100
+
+
+class TestPlaceImageEdgeCases:
+    def test_image_with_page(self, mock_client):
+        mock_client.send_command.return_value = {"name": "img_1"}
+        place_image(0, 0, 100, 100, "/img.png", page=3)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["page"] == 3
+
+
+class TestExportPdfEdgeCases:
+    def test_export_with_version_and_pages(self, mock_client):
+        mock_client.send_command.return_value = {"file_path": "/tmp/out.pdf"}
+        export_pdf("/tmp/out.pdf", pdf_version="1.4", pages=[1, 2])
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["pdf_version"] == "1.4"
+        assert call_params["pages"] == [1, 2]
+
+
+class TestGetDocumentInfoEdgeCases:
+    def test_empty_document_info(self, mock_client):
+        mock_client.send_command.return_value = {
+            "page_count": 1,
+            "pages": [{"number": 1, "width": 210, "height": 297}],
+            "objects": [],
+            "colors": [],
+        }
+        result = get_document_info()
+        assert "1 page(s)" in result
+        assert "Objects" not in result
+        assert "Colors" not in result
+
+
+class TestSaveAfterFailure:
+    def test_save_after_failure_logged(self, mock_client):
+        mock_client.send_command.return_value = {
+            "width": 210,
+            "height": 297,
+            "unit": "mm",
+            "pages": 1,
+        }
+        mock_client.save_document.side_effect = RuntimeError("save failed")
+        # Should not propagate the save error
+        result = create_document()
+        assert "210x297mm" in result
+
+
+class TestModifyObjectEdgeCases:
+    def test_modify_empty_returns_nothing(self, mock_client):
+        mock_client.send_command.return_value = {"name": "obj_1", "modified": []}
+        result = modify_object("obj_1")
+        assert "obj_1" in result

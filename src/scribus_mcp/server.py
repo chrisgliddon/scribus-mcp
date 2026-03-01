@@ -57,18 +57,23 @@ def create_document(
         unit: Measurement unit - "mm", "pt", "in", or "p" (default: "mm")
         pages: Number of initial pages (default: 1)
         orientation: 0 for portrait, 1 for landscape (default: 0)
+
     """
     client = _get_client()
-    result = client.send_command("create_document", {
-        "width": width,
-        "height": height,
-        "margins": margins,
-        "unit": unit,
-        "pages": pages,
-        "orientation": orientation,
-    })
+    result = client.send_command(
+        "create_document",
+        {
+            "width": width,
+            "height": height,
+            "margins": margins,
+            "unit": unit,
+            "pages": pages,
+            "orientation": orientation,
+        },
+    )
     _save_after(result)
-    return f"Created {result['width']}x{result['height']}{result['unit']} document with {result['pages']} page(s)."
+    w, h, u, p = result["width"], result["height"], result["unit"], result["pages"]
+    return f"Created {w}x{h}{u} document with {p} page(s)."
 
 
 @mcp.tool()
@@ -95,6 +100,7 @@ def define_color(
         r: Red 0-255 (RGB mode)
         g: Green 0-255 (RGB mode)
         b: Blue 0-255 (RGB mode)
+
     """
     client = _get_client()
     params = {"name": name, "mode": mode}
@@ -138,6 +144,7 @@ def place_text(
         color: Color name (must be defined in the document palette)
         alignment: Text alignment - "left", "center", "right", "justify"
         page: Page number (1-based) to place the text on
+
     """
     client = _get_client()
     params = {"x": x, "y": y, "w": w, "h": h, "text": text}
@@ -158,7 +165,7 @@ def place_text(
     desc = f"Created text frame '{result['name']}' at ({x}, {y})"
     if text:
         preview = text[:50] + "..." if len(text) > 50 else text
-        desc += f" with text: \"{preview}\""
+        desc += f' with text: "{preview}"'
     return desc + "."
 
 
@@ -184,10 +191,14 @@ def place_image(
         scale_to_frame: Whether to scale image to fit the frame (default: True)
         proportional: Keep aspect ratio when scaling (default: True)
         page: Page number (1-based) to place the image on
+
     """
     client = _get_client()
     params = {
-        "x": x, "y": y, "w": w, "h": h,
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
         "file_path": file_path,
         "scale_to_frame": scale_to_frame,
         "proportional": proportional,
@@ -233,17 +244,20 @@ def draw_shape(
         fill_color: Fill color name (must be defined in palette)
         line_color: Stroke/line color name
         line_width: Line width in points
+
     """
     client = _get_client()
     params = {"shape": shape}
 
     if shape == "line":
-        params.update({
-            "x1": x1 if x1 is not None else 0,
-            "y1": y1 if y1 is not None else 0,
-            "x2": x2 if x2 is not None else 100,
-            "y2": y2 if y2 is not None else 100,
-        })
+        params.update(
+            {
+                "x1": x1 if x1 is not None else 0,
+                "y1": y1 if y1 is not None else 0,
+                "x2": x2 if x2 is not None else 100,
+                "y2": y2 if y2 is not None else 100,
+            }
+        )
     else:
         params.update({"x": x, "y": y, "w": w, "h": h})
 
@@ -295,17 +309,25 @@ def modify_object(
         font_size: New font size in points (text frames only)
         text_color: New text color name (text frames only)
         alignment: New text alignment (text frames only)
+
     """
     client = _get_client()
     params: dict = {"name": name}
 
     for key, val in [
-        ("x", x), ("y", y), ("w", w), ("h", h),
+        ("x", x),
+        ("y", y),
+        ("w", w),
+        ("h", h),
         ("rotation", rotation),
-        ("fill_color", fill_color), ("line_color", line_color),
+        ("fill_color", fill_color),
+        ("line_color", line_color),
         ("line_width", line_width),
-        ("text", text), ("font", font), ("font_size", font_size),
-        ("text_color", text_color), ("alignment", alignment),
+        ("text", text),
+        ("font", font),
+        ("font_size", font_size),
+        ("text_color", text_color),
+        ("alignment", alignment),
     ]:
         if val is not None:
             params[key] = val
@@ -328,13 +350,17 @@ def add_page(
         count: Number of pages to add (default: 1)
         where: Position to insert (-1 = append at end, or page number)
         master_page: Name of the master page to apply
+
     """
     client = _get_client()
-    result = client.send_command("add_page", {
-        "count": count,
-        "where": where,
-        "master_page": master_page,
-    })
+    result = client.send_command(
+        "add_page",
+        {
+            "count": count,
+            "where": where,
+            "master_page": master_page,
+        },
+    )
     _save_after(result)
     return f"Added {result['added']} page(s). Document now has {result['total_pages']} pages."
 
@@ -353,6 +379,7 @@ def export_pdf(
         quality: Quality preset - "screen" (150dpi), "ebook" (150dpi), "press" (300dpi)
         pdf_version: PDF version - "1.3", "1.4", "1.5", "x-1a", "x-3"
         pages: List of page numbers to export (default: all pages)
+
     """
     client = _get_client()
     params: dict = {"file_path": file_path, "quality": quality}
@@ -398,6 +425,7 @@ def run_script(code: str) -> str:
 
     Args:
         code: Python code to execute inside Scribus
+
     """
     client = _get_client()
     result = client.send_command("run_script", {"code": code})

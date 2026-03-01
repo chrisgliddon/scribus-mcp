@@ -8,12 +8,12 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Platform-specific default install locations checked when SCRIBUS_EXECUTABLE is not set
 SCRIBUS_PATHS = [
     "/Applications/Scribus.app/Contents/MacOS/Scribus",
     "/usr/bin/scribus",
@@ -48,6 +48,7 @@ class ScribusClient:
     """Manages a persistent Scribus subprocess and communicates via NDJSON."""
 
     def __init__(self):
+        """Initialize client state and ensure the workspace directory exists."""
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._stderr_thread: threading.Thread | None = None
@@ -82,8 +83,8 @@ class ScribusClient:
     def _read_stderr(self) -> None:
         """Read stderr in background to prevent buffer blocking."""
         try:
-            assert self._process is not None
-            assert self._process.stderr is not None
+            if self._process is None or self._process.stderr is None:
+                return
             for line in self._process.stderr:
                 if isinstance(line, bytes):
                     line = line.decode("utf-8", errors="replace")
@@ -93,15 +94,13 @@ class ScribusClient:
 
     def _wait_for_ready(self) -> None:
         """Read lines from stdout until we get the ready sentinel."""
-        assert self._process is not None
-        assert self._process.stdout is not None
+        if self._process is None or self._process.stdout is None:
+            raise ConnectionError("Scribus process not initialized")
 
         while True:
             line = self._process.stdout.readline()
             if not line:
-                raise ConnectionError(
-                    "Scribus process exited before sending ready sentinel"
-                )
+                raise ConnectionError("Scribus process exited before sending ready sentinel")
 
             if isinstance(line, bytes):
                 line = line.decode("utf-8", errors="replace")
@@ -139,13 +138,17 @@ class ScribusClient:
         Raises:
             RuntimeError: If the command fails
             ConnectionError: If communication with Scribus fails
+
         """
         with self._lock:
             self._ensure_running()
 
-            assert self._process is not None
-            assert self._process.stdin is not None
-            assert self._process.stdout is not None
+            if (
+                self._process is None
+                or self._process.stdin is None
+                or self._process.stdout is None
+            ):
+                raise ConnectionError("Scribus process not initialized")
 
             msg = json.dumps({"command": command, "params": params or {}}) + "\n"
 
@@ -161,15 +164,11 @@ class ScribusClient:
                 response_line = self._process.stdout.readline()
             except OSError as e:
                 self._process = None
-                raise ConnectionError(
-                    f"Failed to read response from Scribus: {e}"
-                ) from e
+                raise ConnectionError(f"Failed to read response from Scribus: {e}") from e
 
             if not response_line:
                 self._process = None
-                raise ConnectionError(
-                    "Scribus process closed stdout (likely crashed)"
-                )
+                raise ConnectionError("Scribus process closed stdout (likely crashed)")
 
             if isinstance(response_line, bytes):
                 response_line = response_line.decode("utf-8", errors="replace")
@@ -177,9 +176,7 @@ class ScribusClient:
             try:
                 response = json.loads(response_line.strip())
             except json.JSONDecodeError as e:
-                raise RuntimeError(
-                    f"Invalid JSON response from Scribus: {response_line!r}"
-                ) from e
+                raise RuntimeError(f"Invalid JSON response from Scribus: {response_line!r}") from e
 
             if not response.get("ok"):
                 error_msg = response.get("error", "Unknown error")
@@ -199,7 +196,8 @@ class ScribusClient:
 
             try:
                 msg = json.dumps({"command": "shutdown", "params": {}}) + "\n"
-                assert self._process.stdin is not None
+                if self._process.stdin is None:
+                    return
                 self._process.stdin.write(msg.encode("utf-8"))
                 self._process.stdin.flush()
                 self._process.wait(timeout=10)

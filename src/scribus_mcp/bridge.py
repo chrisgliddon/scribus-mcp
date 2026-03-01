@@ -15,16 +15,19 @@ import sys
 import traceback
 
 # ---------------------------------------------------------------------------
-# stdout contamination mitigation
+# stdio contamination mitigation
 #
-# Scribus emits diagnostic messages to stdout during startup and operation.
-# We save the real stdout file descriptor, then redirect sys.stdout to stderr
-# so that any stray prints from Scribus go to stderr. All protocol JSON is
-# written to the saved fd.
+# Scribus replaces sys.stdin with a StringIO and emits diagnostic messages to
+# stdout during startup. We save the real file descriptors for both stdin and
+# stdout, then redirect sys.stdout to stderr so stray prints don't corrupt
+# the NDJSON protocol.
 # ---------------------------------------------------------------------------
 
 _real_stdout_fd = os.dup(sys.stdout.fileno())
 _real_stdout = os.fdopen(_real_stdout_fd, "w", buffering=1)  # line-buffered
+
+# Scribus replaces sys.stdin with a StringIO, so open fd 0 directly
+_real_stdin = os.fdopen(0, "r", buffering=1)  # line-buffered
 
 # Redirect sys.stdout to stderr so stray prints don't corrupt the protocol
 sys.stdout = sys.stderr
@@ -53,7 +56,7 @@ def _error(message, code=None):
 # Command handlers
 # ---------------------------------------------------------------------------
 
-import scribus  # noqa: E402  — only available inside Scribus
+import scribus
 
 
 def _unit_constant(unit_str):
@@ -75,7 +78,8 @@ def _alignment_constant(align_str):
         "left": scribus.ALIGN_LEFT,
         "center": scribus.ALIGN_CENTERED,
         "right": scribus.ALIGN_RIGHT,
-        "justify": scribus.ALIGN_JUSTIFIED,
+        "justify": scribus.ALIGN_BLOCK,
+        "block": scribus.ALIGN_BLOCK,
         "forced": scribus.ALIGN_FORCED,
     }
     return mapping.get(align_str, scribus.ALIGN_LEFT)
@@ -88,6 +92,7 @@ def _go_to_page(page):
 
 
 def cmd_create_document(params):
+    """Create new document with given dimensions, margins, and page count."""
     width = params.get("width", 210)
     height = params.get("height", 297)
     unit = _unit_constant(params.get("unit", "mm"))
@@ -124,6 +129,7 @@ def cmd_create_document(params):
 
 
 def cmd_define_color(params):
+    """Define a named CMYK or RGB color in the document palette."""
     name = params["name"]
     mode = params.get("mode", "cmyk")
 
@@ -144,6 +150,7 @@ def cmd_define_color(params):
 
 
 def cmd_place_text(params):
+    """Create a text frame and optionally set content and styling."""
     x = params.get("x", 0)
     y = params.get("y", 0)
     w = params.get("w", 100)
@@ -178,6 +185,7 @@ def cmd_place_text(params):
 
 
 def cmd_place_image(params):
+    """Create an image frame, load a file, and optionally scale to fit."""
     x = params.get("x", 0)
     y = params.get("y", 0)
     w = params.get("w", 100)
@@ -199,6 +207,7 @@ def cmd_place_image(params):
 
 
 def cmd_draw_shape(params):
+    """Draw a rectangle, ellipse, or line with optional fill and stroke."""
     shape = params.get("shape", "rectangle")
 
     if shape == "line":
@@ -236,6 +245,7 @@ def cmd_draw_shape(params):
 
 
 def cmd_modify_object(params):
+    """Modify position, size, rotation, colors, or text props of a named object."""
     name = params["name"]
     modified = []
 
@@ -307,6 +317,7 @@ def cmd_modify_object(params):
 
 
 def cmd_add_page(params):
+    """Append one or more pages to the document."""
     count = params.get("count", 1)
     where = params.get("where", -1)
     master_page = params.get("master_page", "")
@@ -318,6 +329,7 @@ def cmd_add_page(params):
 
 
 def cmd_export_pdf(params):
+    """Export document as PDF with configurable quality and version."""
     file_path = params["file_path"]
 
     pdf = scribus.PDFfile()
@@ -348,16 +360,15 @@ def cmd_export_pdf(params):
             pdf.version = ver
 
     pages_param = params.get("pages")
-    if pages_param:
-        if isinstance(pages_param, list):
-            pdf.pages = pages_param
-        # else: export all pages (default)
+    if pages_param and isinstance(pages_param, list):
+        pdf.pages = pages_param
 
     pdf.save()
     return {"file_path": file_path}
 
 
 def cmd_get_document_info(params):
+    """Return page dims, object list, and color palette."""
     page_count = scribus.pageCount()
     pages = []
     for i in range(1, page_count + 1):
@@ -368,11 +379,13 @@ def cmd_get_document_info(params):
     items = []
     for item_info in scribus.getPageItems():
         name, obj_type, page_num = item_info
-        items.append({
-            "name": name,
-            "type": obj_type,
-            "page": page_num,
-        })
+        items.append(
+            {
+                "name": name,
+                "type": obj_type,
+                "page": page_num,
+            }
+        )
 
     colors = scribus.getColorNames()
 
@@ -385,6 +398,7 @@ def cmd_get_document_info(params):
 
 
 def cmd_run_script(params):
+    """Execute arbitrary Python code inside the Scribus interpreter."""
     code = params["code"]
     namespace = {"scribus": scribus, "result": None}
     exec(code, namespace)
@@ -399,6 +413,7 @@ def cmd_run_script(params):
 
 
 def cmd_save_document(params):
+    """Save document to a path, or current path if none given."""
     file_path = params.get("file_path")
     if file_path:
         scribus.saveDocAs(file_path)
@@ -442,11 +457,13 @@ COMMANDS = {
 # Main loop
 # ---------------------------------------------------------------------------
 
+
 def main():
+    """Read NDJSON commands from stdin and dispatch to handlers in a loop."""
     # Send ready sentinel
     _send({"ready": True})
 
-    for line in sys.stdin:
+    for line in _real_stdin:
         line = line.strip()
         if not line:
             continue

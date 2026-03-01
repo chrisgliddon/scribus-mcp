@@ -13,12 +13,14 @@ UNIT_PICAS = 3
 ALIGN_LEFT = 0
 ALIGN_CENTERED = 1
 ALIGN_RIGHT = 2
-ALIGN_JUSTIFIED = 3
+ALIGN_BLOCK = 3
 ALIGN_FORCED = 4
 
 # In-memory document state
 _doc = None
 _counter = 0
+_saved_path = None
+_last_pdf = None
 
 
 def _next_name(prefix="obj"):
@@ -29,14 +31,17 @@ def _next_name(prefix="obj"):
 
 def _reset():
     """Reset all state (call between tests)."""
-    global _doc, _counter
+    global _doc, _counter, _saved_path, _last_pdf
     _doc = None
     _counter = 0
+    _saved_path = None
+    _last_pdf = None
 
 
 class _Document:
-    def __init__(self, size, margins, orientation, first_page, unit, page_type,
-                 first_page_order, num_pages):
+    def __init__(
+        self, size, margins, orientation, first_page, unit, page_type, first_page_order, num_pages
+    ):
         self.size = size
         self.margins = margins
         self.orientation = orientation
@@ -52,11 +57,13 @@ def haveDoc():
     return _doc is not None
 
 
-def newDocument(size, margins, orientation, first_page, unit, page_type,
-                first_page_order, num_pages):
+def newDocument(
+    size, margins, orientation, first_page, unit, page_type, first_page_order, num_pages
+):
     global _doc
-    _doc = _Document(size, margins, orientation, first_page, unit, page_type,
-                     first_page_order, num_pages)
+    _doc = _Document(
+        size, margins, orientation, first_page, unit, page_type, first_page_order, num_pages
+    )
 
 
 def gotoPage(page):
@@ -99,9 +106,19 @@ def defineColorRGB(name, r, g, b):
 def createText(x, y, w, h):
     name = _next_name("text")
     if _doc:
-        obj = {"name": name, "type": 4, "page": _doc.current_page,
-               "x": x, "y": y, "w": w, "h": h, "text": "", "font": None,
-               "font_size": None, "color": None}
+        obj = {
+            "name": name,
+            "type": 4,
+            "page": _doc.current_page,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "text": "",
+            "font": None,
+            "font_size": None,
+            "color": None,
+        }
         _doc.items.append(obj)
         _doc.objects[name] = obj
     return name
@@ -135,8 +152,16 @@ def setTextAlignment(align, name):
 def createImage(x, y, w, h):
     name = _next_name("img")
     if _doc:
-        obj = {"name": name, "type": 2, "page": _doc.current_page,
-               "x": x, "y": y, "w": w, "h": h, "image": None}
+        obj = {
+            "name": name,
+            "type": 2,
+            "page": _doc.current_page,
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "image": None,
+        }
         _doc.items.append(obj)
         _doc.objects[name] = obj
     return name
@@ -154,8 +179,7 @@ def setScaleImageToFrame(scale, proportional, name):
 def createRect(x, y, w, h):
     name = _next_name("rect")
     if _doc:
-        obj = {"name": name, "type": 6, "page": _doc.current_page,
-               "x": x, "y": y, "w": w, "h": h}
+        obj = {"name": name, "type": 6, "page": _doc.current_page, "x": x, "y": y, "w": w, "h": h}
         _doc.items.append(obj)
         _doc.objects[name] = obj
     return name
@@ -164,8 +188,7 @@ def createRect(x, y, w, h):
 def createEllipse(x, y, w, h):
     name = _next_name("ellipse")
     if _doc:
-        obj = {"name": name, "type": 6, "page": _doc.current_page,
-               "x": x, "y": y, "w": w, "h": h}
+        obj = {"name": name, "type": 6, "page": _doc.current_page, "x": x, "y": y, "w": w, "h": h}
         _doc.items.append(obj)
         _doc.objects[name] = obj
     return name
@@ -174,8 +197,15 @@ def createEllipse(x, y, w, h):
 def createLine(x1, y1, x2, y2):
     name = _next_name("line")
     if _doc:
-        obj = {"name": name, "type": 5, "page": _doc.current_page,
-               "x1": x1, "y1": y1, "x2": x2, "y2": y2}
+        obj = {
+            "name": name,
+            "type": 5,
+            "page": _doc.current_page,
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
+        }
         _doc.items.append(obj)
         _doc.objects[name] = obj
     return name
@@ -235,22 +265,26 @@ def newPage(where, masterpage=""):
 
 class PDFfile:
     def __init__(self):
+        global _last_pdf
         self.file = ""
         self.quality = 0
         self.resolution = 300
         self.version = 15
         self.pages = []
+        _last_pdf = self
 
     def save(self):
         pass  # No-op in mock
 
 
 def saveDoc():
-    pass
+    global _saved_path
+    _saved_path = True
 
 
 def saveDocAs(path):
-    pass
+    global _saved_path
+    _saved_path = path
 
 
 def closeDoc():
