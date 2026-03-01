@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "scribus": {
+      "command": "uv",
+      "args": ["--directory", "/Users/polofield/dev/scribus-mcp", "run", "scribus-mcp"]
+    }
+  }
+}
