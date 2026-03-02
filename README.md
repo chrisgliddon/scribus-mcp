@@ -150,6 +150,8 @@ Add a `"scribus"` entry to the `mcpServers` object in your config file:
 | Tool | What it does |
 |------|-------------|
 | `place_text` | Text frame with content, styling, columns, and paragraph style. Params: `x`, `y`, `w`, `h`, `text`, `font`, `font_size`, `color`, `alignment`, `page`, `line_spacing`, `line_spacing_mode` (0=fixed, 1=auto, 2=baseline grid), `columns`, `column_gap`, `style` |
+| `edit_text` | Edit text in an existing frame. Params: `name`, `action` (insert/apply_char_style/apply_para_style/hyphenate/dehyphenate), `text`, `position`, `start`, `count`, `style` |
+| `get_text_info` | Get text frame metrics: overflow count, character count, line count. Params: `name`, `refresh_layout` |
 | `create_paragraph_style` | Named paragraph style. Params: `name`, `font`, `font_size`, `line_spacing`, `line_spacing_mode`, `alignment`, `first_indent`, `space_above`, `space_below`, `drop_cap`, `drop_cap_lines`, `char_style` |
 | `create_char_style` | Named character style. Params: `name`, `font`, `font_size`, `fill_color`, `features` (e.g. "bold,italic,smallcaps"), `tracking` |
 | `link_text_frames` | Link two frames for text flow. Params: `from_frame`, `to_frame` |
@@ -160,10 +162,29 @@ Add a `"scribus"` entry to the `mcpServers` object in your config file:
 | Tool | What it does |
 |------|-------------|
 | `place_image` | Image frame. Params: `x`, `y`, `w`, `h`, `file_path`, `scale_to_frame`, `proportional`, `page` |
+| `place_svg` | Place an SVG file on the page. Params: `file_path`, `x`, `y`, `page` |
 | `draw_shape` | Rectangle, ellipse, or line. Params: `shape`, `x/y/w/h` or `x1/y1/x2/y2`, `fill_color`, `line_color`, `line_width` |
-| `modify_object` | Change object props. Params: `name`, + any of: position, size, rotation, colors, text props, `line_spacing`, `line_spacing_mode`, `columns`, `column_gap` |
-| `get_object_properties` | Inspect an object's properties (position, size, rotation, type-specific: text content, font, colors, columns). Params: `name` |
+| `modify_object` | Change object props. Params: `name`, + any of: position, size, rotation, colors, text props, `line_spacing`, `line_spacing_mode`, `columns`, `column_gap`, `corner_radius`, `text_flow_mode`, `fill_transparency`, `line_style` |
+| `get_object_properties` | Inspect an object's properties (position, size, rotation, corner_radius, text_flow_mode, fill_transparency, type-specific: text content, font, colors, columns). Params: `name` |
 | `delete_object` | Remove an object from the document. Params: `name` |
+| `control_image` | Get or set image offset/scale within a frame. Params: `name`, `action` (get/set_offset/set_scale/fit_frame_to_image), `offset_x`, `offset_y`, `scale_x`, `scale_y` |
+| `duplicate_objects` | Duplicate one or more objects. Params: `names` |
+
+### Layers & Grouping
+
+| Tool | What it does |
+|------|-------------|
+| `manage_layers` | Create, delete, list, activate, and configure layers. Params: `action` (create/delete/list/get_active/set_active/send_to_layer/set_properties/get_properties), `layer`, `name`, `visible`, `locked`, `printable` |
+| `organize_objects` | Group, ungroup, or change z-order. Params: `action` (group/ungroup/move_to_front/move_to_back), `names`, `name` |
+
+### Tables
+
+| Tool | What it does |
+|------|-------------|
+| `create_table` | Create a table frame. Params: `x`, `y`, `w`, `h`, `rows`, `columns`, `page` |
+| `modify_table_structure` | Insert/remove rows/columns, resize, merge cells. Params: `name`, `action` (insert_rows/insert_columns/remove_rows/remove_columns/resize_row/resize_column/merge_cells/get_size), `index`, `count`, `size`, `row`, `col`, `num_rows`, `num_cols` |
+| `set_table_content` | Read or write text in table cells. Params: `name`, `cells` (list of {row, col, text}), `get_cell` ({row, col}) |
+| `style_table` | Style a table and its cells. Params: `name`, `table_fill_color`, `table_style`, `cells` (list with fill_color, style, border_*, padding_*) |
 
 ### Layout & Master Pages
 
@@ -175,6 +196,7 @@ Add a `"scribus"` entry to the `mcpServers` object in your config file:
 | `close_master_page` | Exit master page editing mode |
 | `apply_master_page` | Apply a master page to a document page. Params: `master_page`, `page` |
 | `list_master_pages` | List all master page names |
+| `delete_page` | Delete a page from the document. Params: `page` |
 
 ### PDF Export
 
@@ -187,6 +209,7 @@ Add a `"scribus"` entry to the `mcpServers` object in your config file:
 | Tool | What it does |
 |------|-------------|
 | `run_script` | Execute raw Scribus Python. Params: `code`. Set `result` variable to return data |
+| `get_font_names` | List all available font names in Scribus |
 
 ## Example Prompts
 

@@ -9,26 +9,39 @@ from scribus_mcp.server import (
     add_page,
     apply_master_page,
     close_master_page,
+    control_image,
     create_char_style,
     create_document,
     create_master_page,
     create_paragraph_style,
+    create_table,
     define_color,
     delete_object,
+    delete_page,
     draw_shape,
+    duplicate_objects,
     edit_master_page,
+    edit_text,
     export_pdf,
     get_document_info,
+    get_font_names,
     get_object_properties,
+    get_text_info,
     link_text_frames,
     list_master_pages,
+    manage_layers,
     modify_object,
+    modify_table_structure,
     open_document,
+    organize_objects,
     place_image,
+    place_svg,
     place_text,
     run_script,
     set_baseline_grid,
     set_guides,
+    set_table_content,
+    style_table,
     unlink_text_frames,
 )
 
@@ -607,3 +620,402 @@ class TestModifyObjectEdgeCases:
         mock_client.send_command.return_value = {"name": "obj_1", "modified": []}
         result = modify_object("obj_1")
         assert "obj_1" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase A: Extended modify_object + get_object_properties
+# ---------------------------------------------------------------------------
+
+
+class TestModifyObjectExtended:
+    def test_corner_radius(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "rect_1",
+            "modified": ["corner_radius"],
+        }
+        result = modify_object("rect_1", corner_radius=5.0)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["corner_radius"] == 5.0
+        assert "corner_radius" in result
+
+    def test_text_flow_mode(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "rect_1",
+            "modified": ["text_flow_mode"],
+        }
+        modify_object("rect_1", text_flow_mode=2)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["text_flow_mode"] == 2
+
+    def test_fill_transparency(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "rect_1",
+            "modified": ["fill_transparency"],
+        }
+        modify_object("rect_1", fill_transparency=0.5)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["fill_transparency"] == 0.5
+
+    def test_line_style(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "rect_1",
+            "modified": ["line_style"],
+        }
+        modify_object("rect_1", line_style=3)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["line_style"] == 3
+
+
+class TestGetObjectPropertiesExtended:
+    def test_displays_corner_radius(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "rect_1",
+            "type": "shape",
+            "x": 0, "y": 0, "w": 50, "h": 50,
+            "rotation": 0,
+            "fill_color": "Red",
+            "line_color": "Black",
+            "line_width": 1.0,
+            "corner_radius": 10.0,
+            "text_flow_mode": 0,
+            "fill_transparency": 0.0,
+        }
+        result = get_object_properties("rect_1")
+        assert "Corner radius: 10.0" in result
+
+    def test_displays_text_flow_mode(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "rect_1",
+            "type": "shape",
+            "x": 0, "y": 0, "w": 50, "h": 50,
+            "rotation": 0,
+            "fill_color": "Red",
+            "line_color": "Black",
+            "line_width": 1.0,
+            "corner_radius": 0,
+            "text_flow_mode": 2,
+            "fill_transparency": 0.0,
+        }
+        result = get_object_properties("rect_1")
+        assert "Text flow mode: 2" in result
+
+    def test_displays_fill_transparency(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "rect_1",
+            "type": "shape",
+            "x": 0, "y": 0, "w": 50, "h": 50,
+            "rotation": 0,
+            "fill_color": "Red",
+            "line_color": "Black",
+            "line_width": 1.0,
+            "corner_radius": 0,
+            "text_flow_mode": 0,
+            "fill_transparency": 0.75,
+        }
+        result = get_object_properties("rect_1")
+        assert "Fill transparency: 0.75" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase B: Text Operations
+# ---------------------------------------------------------------------------
+
+
+class TestEditText:
+    def test_insert(self, mock_client):
+        mock_client.send_command.return_value = {"name": "text_1", "action": "insert"}
+        result = edit_text("text_1", "insert", text="Hello", position=-1)
+        assert "insert" in result
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["text"] == "Hello"
+        assert call_params["position"] == -1
+
+    def test_apply_char_style(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "text_1", "action": "apply_char_style",
+        }
+        edit_text("text_1", "apply_char_style", start=0, count=5, style="Bold")
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["style"] == "Bold"
+        assert call_params["start"] == 0
+
+    def test_auto_saves(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "text_1", "action": "hyphenate",
+        }
+        edit_text("text_1", "hyphenate")
+        mock_client.save_document.assert_called_once()
+
+
+class TestGetTextInfo:
+    def test_basic(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "text_1", "overflow": 0, "length": 42, "lines": 3,
+        }
+        result = get_text_info("text_1")
+        assert "Characters: 42" in result
+        assert "Lines: 3" in result
+        assert "Overflow: 0" in result
+
+    def test_refresh_layout(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "text_1", "overflow": 5, "length": 100, "lines": 8,
+        }
+        get_text_info("text_1", refresh_layout=True)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["refresh_layout"] is True
+
+    def test_does_not_auto_save(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "text_1", "overflow": 0, "length": 5, "lines": 1,
+        }
+        get_text_info("text_1")
+        mock_client.save_document.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase C: Layers + Grouping/Z-order
+# ---------------------------------------------------------------------------
+
+
+class TestManageLayers:
+    def test_create(self, mock_client):
+        mock_client.send_command.return_value = {"action": "create", "layer": "Text"}
+        result = manage_layers("create", layer="Text")
+        assert "completed" in result
+
+    def test_list(self, mock_client):
+        mock_client.send_command.return_value = {
+            "action": "list", "layers": ["Background", "Text", "Images"],
+        }
+        result = manage_layers("list")
+        assert "Background" in result
+        assert "Text" in result
+
+    def test_get_active(self, mock_client):
+        mock_client.send_command.return_value = {"action": "get_active", "layer": "Text"}
+        result = manage_layers("get_active")
+        assert "Active layer: Text" in result
+
+    def test_get_properties(self, mock_client):
+        mock_client.send_command.return_value = {
+            "action": "get_properties", "layer": "Guide",
+            "visible": False, "locked": True, "printable": True,
+        }
+        result = manage_layers("get_properties", layer="Guide")
+        assert "visible=False" in result
+        assert "locked=True" in result
+
+    def test_mutating_saves(self, mock_client):
+        mock_client.send_command.return_value = {"action": "create", "layer": "X"}
+        manage_layers("create", layer="X")
+        mock_client.save_document.assert_called_once()
+
+    def test_read_only_no_save(self, mock_client):
+        mock_client.send_command.return_value = {
+            "action": "list", "layers": ["Background"],
+        }
+        manage_layers("list")
+        mock_client.save_document.assert_not_called()
+
+
+class TestOrganizeObjects:
+    def test_group(self, mock_client):
+        mock_client.send_command.return_value = {
+            "action": "group", "group_name": "group_1",
+        }
+        result = organize_objects("group", names=["t1", "t2"])
+        assert "group_1" in result
+        mock_client.save_document.assert_called_once()
+
+    def test_ungroup(self, mock_client):
+        mock_client.send_command.return_value = {
+            "action": "ungroup", "name": "group_1",
+        }
+        result = organize_objects("ungroup", name="group_1")
+        assert "Ungrouped" in result
+
+    def test_move_to_front(self, mock_client):
+        mock_client.send_command.return_value = {
+            "action": "move_to_front", "name": "text_1",
+        }
+        result = organize_objects("move_to_front", name="text_1")
+        assert "front" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase D: Tables
+# ---------------------------------------------------------------------------
+
+
+class TestCreateTable:
+    def test_basic(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "rows": 3, "columns": 4,
+        }
+        result = create_table(10, 20, 180, 100, 3, 4)
+        assert "3x4" in result
+        assert "table_1" in result
+
+    def test_with_page(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "rows": 2, "columns": 2,
+        }
+        create_table(0, 0, 100, 100, 2, 2, page=2)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["page"] == 2
+
+
+class TestModifyTableStructure:
+    def test_insert_rows(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "action": "insert_rows",
+        }
+        result = modify_table_structure("table_1", "insert_rows", index=1, count=2)
+        assert "insert_rows" in result
+
+    def test_get_size(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "action": "get_size", "rows": 3, "columns": 5,
+        }
+        result = modify_table_structure("table_1", "get_size")
+        assert "3 rows" in result
+        assert "5 columns" in result
+
+    def test_get_size_no_save(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "action": "get_size", "rows": 3, "columns": 5,
+        }
+        modify_table_structure("table_1", "get_size")
+        mock_client.save_document.assert_not_called()
+
+    def test_mutating_saves(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "action": "insert_rows",
+        }
+        modify_table_structure("table_1", "insert_rows", index=0, count=1)
+        mock_client.save_document.assert_called_once()
+
+
+class TestSetTableContent:
+    def test_write(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "cells_written": 2,
+        }
+        result = set_table_content(
+            "table_1",
+            cells=[{"row": 0, "col": 0, "text": "A"}, {"row": 0, "col": 1, "text": "B"}],
+        )
+        assert "2 cell(s)" in result
+        mock_client.save_document.assert_called_once()
+
+    def test_read(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "row": 0, "col": 0, "text": "Hello",
+        }
+        result = set_table_content("table_1", get_cell={"row": 0, "col": 0})
+        assert "Hello" in result
+
+
+class TestStyleTable:
+    def test_basic(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "cells_styled": 1,
+        }
+        result = style_table(
+            "table_1",
+            cells=[{"row": 0, "col": 0, "fill_color": "Red"}],
+        )
+        assert "1 cell(s)" in result
+        mock_client.save_document.assert_called_once()
+
+    def test_table_fill(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "table_1", "cells_styled": 0,
+        }
+        style_table("table_1", table_fill_color="White")
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["table_fill_color"] == "White"
+
+
+# ---------------------------------------------------------------------------
+# Phase E: Image Control + Misc Standalone Tools
+# ---------------------------------------------------------------------------
+
+
+class TestControlImage:
+    def test_get(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "img_1",
+            "offset_x": 5.0, "offset_y": 10.0,
+            "scale_x": 0.5, "scale_y": 0.5,
+        }
+        result = control_image("img_1", action="get")
+        assert "offset=(5.0, 10.0)" in result
+        assert "scale=(0.5, 0.5)" in result
+
+    def test_set_offset(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "img_1", "action": "set_offset",
+        }
+        result = control_image("img_1", action="set_offset", offset_x=10, offset_y=20)
+        assert "set_offset" in result
+        mock_client.save_document.assert_called_once()
+
+    def test_get_no_save(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "img_1",
+            "offset_x": 0, "offset_y": 0,
+            "scale_x": 1, "scale_y": 1,
+        }
+        control_image("img_1")
+        mock_client.save_document.assert_not_called()
+
+
+class TestDeletePage:
+    def test_basic(self, mock_client):
+        mock_client.send_command.return_value = {"page": 2, "total_pages": 2}
+        result = delete_page(2)
+        assert "Deleted page 2" in result
+        assert "2 pages" in result
+        mock_client.save_document.assert_called_once()
+
+
+class TestGetFontNames:
+    def test_basic(self, mock_client):
+        mock_client.send_command.return_value = {
+            "fonts": ["Arial Regular", "Times New Roman"],
+        }
+        result = get_font_names()
+        assert "Arial Regular" in result
+        assert "2" in result
+
+
+class TestDuplicateObjects:
+    def test_basic(self, mock_client):
+        mock_client.send_command.return_value = {
+            "original_names": ["text_1"],
+            "new_names": ["dup_1"],
+        }
+        result = duplicate_objects(["text_1"])
+        assert "dup_1" in result
+        mock_client.save_document.assert_called_once()
+
+
+class TestPlaceSvg:
+    def test_basic(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "svg_1", "file_path": "/icon.svg",
+        }
+        result = place_svg("/icon.svg", 10, 20)
+        assert "svg_1" in result
+        assert "/icon.svg" in result
+        mock_client.save_document.assert_called_once()
+
+    def test_with_page(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "svg_1", "file_path": "/icon.svg",
+        }
+        place_svg("/icon.svg", 0, 0, page=3)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["page"] == 3

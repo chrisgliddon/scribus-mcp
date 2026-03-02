@@ -378,6 +378,26 @@ def cmd_modify_object(params):
         scribus.setColumnGap(col_gap, name)
         modified.append("column_gap")
 
+    corner_radius = params.get("corner_radius")
+    if corner_radius is not None:
+        scribus.setCornerRadius(corner_radius, name)
+        modified.append("corner_radius")
+
+    text_flow_mode = params.get("text_flow_mode")
+    if text_flow_mode is not None:
+        scribus.setTextFlowMode(name, text_flow_mode)
+        modified.append("text_flow_mode")
+
+    fill_transparency = params.get("fill_transparency")
+    if fill_transparency is not None:
+        scribus.setFillTransparency(fill_transparency, name)
+        modified.append("fill_transparency")
+
+    line_style = params.get("line_style")
+    if line_style is not None:
+        scribus.setLineStyle(line_style, name)
+        modified.append("line_style")
+
     return {"name": name, "modified": modified}
 
 
@@ -737,6 +757,11 @@ def cmd_get_object_properties(params):
         props["line_color"] = scribus.getLineColor(name)
         props["line_width"] = scribus.getLineWidth(name)
 
+    # Extended properties (all object types)
+    props["corner_radius"] = scribus.getCornerRadius(name)
+    props["text_flow_mode"] = scribus.getTextFlowMode(name)
+    props["fill_transparency"] = scribus.getFillTransparency(name)
+
     return props
 
 
@@ -745,6 +770,316 @@ def cmd_delete_object(params):
     name = params["name"]
     scribus.deleteObject(name)
     return {"name": name, "deleted": True}
+
+
+def cmd_edit_text(params):
+    """Edit text in an existing text frame."""
+    name = params["name"]
+    action = params["action"]
+
+    if action == "insert":
+        text = params["text"]
+        position = params.get("position", -1)
+        scribus.insertText(text, position, name)
+    elif action == "apply_char_style":
+        start = params["start"]
+        count = params["count"]
+        style = params["style"]
+        scribus.selectText(start, count, name)
+        scribus.setCharacterStyle(style, name)
+    elif action == "apply_para_style":
+        start = params["start"]
+        count = params["count"]
+        style = params["style"]
+        scribus.selectText(start, count, name)
+        scribus.setParagraphStyle(style, name)
+    elif action == "hyphenate":
+        scribus.hyphenateText(name)
+    elif action == "dehyphenate":
+        scribus.dehyphenateText(name)
+    else:
+        raise ValueError(f"Unknown edit_text action: {action}")
+
+    return {"name": name, "action": action}
+
+
+def cmd_get_text_info(params):
+    """Return text overflow, length, and line count for a text frame."""
+    name = params["name"]
+
+    if params.get("refresh_layout"):
+        scribus.layoutTextChain(name)
+
+    overflow = scribus.textOverflows(name)
+    length = scribus.getTextLength(name)
+    lines = scribus.getTextLines(name)
+
+    return {
+        "name": name,
+        "overflow": overflow,
+        "length": length,
+        "lines": lines,
+    }
+
+
+def cmd_manage_layers(params):
+    """Manage document layers."""
+    action = params["action"]
+
+    if action == "create":
+        layer = params["layer"]
+        scribus.createLayer(layer)
+        return {"action": action, "layer": layer}
+    elif action == "delete":
+        layer = params["layer"]
+        scribus.deleteLayer(layer)
+        return {"action": action, "layer": layer}
+    elif action == "list":
+        layers = list(scribus.getLayers())
+        return {"action": action, "layers": layers}
+    elif action == "get_active":
+        layer = scribus.getActiveLayer()
+        return {"action": action, "layer": layer}
+    elif action == "set_active":
+        layer = params["layer"]
+        scribus.setActiveLayer(layer)
+        return {"action": action, "layer": layer}
+    elif action == "send_to_layer":
+        layer = params["layer"]
+        name = params["name"]
+        scribus.sendToLayer(layer, name)
+        return {"action": action, "layer": layer, "name": name}
+    elif action == "set_properties":
+        layer = params["layer"]
+        modified = []
+        visible = params.get("visible")
+        if visible is not None:
+            scribus.setLayerVisible(layer, visible)
+            modified.append("visible")
+        locked = params.get("locked")
+        if locked is not None:
+            scribus.setLayerLocked(layer, locked)
+            modified.append("locked")
+        printable = params.get("printable")
+        if printable is not None:
+            scribus.setLayerPrintable(layer, printable)
+            modified.append("printable")
+        return {"action": action, "layer": layer, "modified": modified}
+    elif action == "get_properties":
+        layer = params["layer"]
+        return {
+            "action": action,
+            "layer": layer,
+            "visible": scribus.isLayerVisible(layer),
+            "locked": scribus.isLayerLocked(layer),
+            "printable": scribus.isLayerPrintable(layer),
+        }
+    else:
+        raise ValueError(f"Unknown manage_layers action: {action}")
+
+
+def cmd_organize_objects(params):
+    """Group, ungroup, or change z-order of objects."""
+    action = params["action"]
+
+    if action == "group":
+        names = params["names"]
+        scribus.deselectAll()
+        for n in names:
+            scribus.selectObject(n)
+        group_name = scribus.groupObjects(names)
+        return {"action": action, "group_name": group_name}
+    elif action == "ungroup":
+        name = params["name"]
+        scribus.unGroupObjects(name)
+        return {"action": action, "name": name}
+    elif action == "move_to_front":
+        name = params["name"]
+        scribus.deselectAll()
+        scribus.selectObject(name)
+        scribus.moveSelectionToFront()
+        return {"action": action, "name": name}
+    elif action == "move_to_back":
+        name = params["name"]
+        scribus.deselectAll()
+        scribus.selectObject(name)
+        scribus.moveSelectionToBack()
+        return {"action": action, "name": name}
+    else:
+        raise ValueError(f"Unknown organize_objects action: {action}")
+
+
+def cmd_create_table(params):
+    """Create a table frame."""
+    x = params.get("x", 0)
+    y = params.get("y", 0)
+    w = params.get("w", 100)
+    h = params.get("h", 100)
+    rows = params["rows"]
+    columns = params["columns"]
+    page = params.get("page")
+
+    _go_to_page(page)
+    name = scribus.createTable(x, y, w, h, rows, columns)
+    return {"name": name, "rows": rows, "columns": columns}
+
+
+def cmd_modify_table_structure(params):
+    """Modify table structure: insert/remove rows/cols, resize, merge, get size."""
+    name = params["name"]
+    action = params["action"]
+
+    if action == "insert_rows":
+        scribus.insertTableRows(name, params["index"], params.get("count", 1))
+        return {"name": name, "action": action}
+    elif action == "insert_columns":
+        scribus.insertTableColumns(name, params["index"], params.get("count", 1))
+        return {"name": name, "action": action}
+    elif action == "remove_rows":
+        scribus.removeTableRows(name, params["index"], params.get("count", 1))
+        return {"name": name, "action": action}
+    elif action == "remove_columns":
+        scribus.removeTableColumns(name, params["index"], params.get("count", 1))
+        return {"name": name, "action": action}
+    elif action == "resize_row":
+        scribus.resizeTableRow(name, params["index"], params["size"])
+        return {"name": name, "action": action}
+    elif action == "resize_column":
+        scribus.resizeTableColumn(name, params["index"], params["size"])
+        return {"name": name, "action": action}
+    elif action == "merge_cells":
+        scribus.mergeTableCells(
+            name, params["row"], params["col"],
+            params["num_rows"], params["num_cols"],
+        )
+        return {"name": name, "action": action}
+    elif action == "get_size":
+        rows = scribus.getTableRows(name)
+        cols = scribus.getTableColumns(name)
+        return {"name": name, "action": action, "rows": rows, "columns": cols}
+    else:
+        raise ValueError(f"Unknown modify_table_structure action: {action}")
+
+
+def cmd_set_table_content(params):
+    """Read or write text in table cells."""
+    name = params["name"]
+
+    get_cell = params.get("get_cell")
+    if get_cell:
+        row = get_cell["row"]
+        col = get_cell["col"]
+        text = scribus.getCellText(name, row, col)
+        return {"name": name, "row": row, "col": col, "text": text}
+
+    cells = params.get("cells", [])
+    for cell in cells:
+        scribus.setCellText(name, cell["row"], cell["col"], cell["text"])
+    return {"name": name, "cells_written": len(cells)}
+
+
+def cmd_style_table(params):
+    """Style a table and its cells."""
+    name = params["name"]
+
+    table_fill = params.get("table_fill_color")
+    if table_fill is not None:
+        scribus.setTableFillColor(name, table_fill)
+
+    table_style = params.get("table_style")
+    if table_style is not None:
+        scribus.setTableStyle(name, table_style)
+
+    cells = params.get("cells", [])
+    for cell in cells:
+        row = cell["row"]
+        col = cell["col"]
+
+        fill_color = cell.get("fill_color")
+        if fill_color is not None:
+            scribus.setCellFillColor(name, row, col, fill_color)
+
+        style = cell.get("style")
+        if style is not None:
+            scribus.setCellStyle(name, row, col, style)
+
+        for side in ("top", "bottom", "left", "right"):
+            border = cell.get(f"border_{side}")
+            if border is not None:
+                setter = getattr(scribus, f"setCell{side.capitalize()}Border")
+                setter(name, row, col, border["width"], border["color"])
+
+        for side in ("top", "bottom", "left", "right"):
+            padding = cell.get(f"padding_{side}")
+            if padding is not None:
+                setter = getattr(scribus, f"setCell{side.capitalize()}Padding")
+                setter(name, row, col, padding)
+
+    return {"name": name, "cells_styled": len(cells)}
+
+
+def cmd_control_image(params):
+    """Get or set image positioning within a frame."""
+    name = params["name"]
+    action = params.get("action", "get")
+
+    if action == "get":
+        offset = scribus.getImageOffset(name)
+        scale = scribus.getImageScale(name)
+        return {
+            "name": name,
+            "offset_x": offset[0],
+            "offset_y": offset[1],
+            "scale_x": scale[0],
+            "scale_y": scale[1],
+        }
+    elif action == "set_offset":
+        x = params.get("offset_x", 0)
+        y = params.get("offset_y", 0)
+        scribus.setImageOffset(x, y, name)
+        return {"name": name, "action": action}
+    elif action == "set_scale":
+        x = params.get("scale_x", 1)
+        y = params.get("scale_y", 1)
+        scribus.setImageScale(x, y, name)
+        return {"name": name, "action": action}
+    elif action == "fit_frame_to_image":
+        scribus.setScaleFrameToImage(name)
+        return {"name": name, "action": action}
+    else:
+        raise ValueError(f"Unknown control_image action: {action}")
+
+
+def cmd_delete_page(params):
+    """Delete a page from the document."""
+    page = params["page"]
+    scribus.deletePage(page)
+    return {"page": page, "total_pages": scribus.pageCount()}
+
+
+def cmd_get_font_names(params):
+    """Return list of available font names."""
+    fonts = scribus.getFontNames()
+    return {"fonts": list(fonts)}
+
+
+def cmd_duplicate_objects(params):
+    """Duplicate one or more objects."""
+    names = params["names"]
+    new_names = scribus.duplicateObjects(names)
+    return {"original_names": names, "new_names": new_names}
+
+
+def cmd_place_svg(params):
+    """Place an SVG file on the page."""
+    file_path = params["file_path"]
+    x = params.get("x", 0)
+    y = params.get("y", 0)
+    page = params.get("page")
+
+    _go_to_page(page)
+    name = scribus.placeSVG(file_path, x, y)
+    return {"name": name, "file_path": file_path}
 
 
 def cmd_save_document(params):
@@ -799,6 +1134,19 @@ COMMANDS = {
     "close_master_page": cmd_close_master_page,
     "apply_master_page": cmd_apply_master_page,
     "list_master_pages": cmd_list_master_pages,
+    "edit_text": cmd_edit_text,
+    "get_text_info": cmd_get_text_info,
+    "manage_layers": cmd_manage_layers,
+    "organize_objects": cmd_organize_objects,
+    "create_table": cmd_create_table,
+    "modify_table_structure": cmd_modify_table_structure,
+    "set_table_content": cmd_set_table_content,
+    "style_table": cmd_style_table,
+    "control_image": cmd_control_image,
+    "delete_page": cmd_delete_page,
+    "get_font_names": cmd_get_font_names,
+    "duplicate_objects": cmd_duplicate_objects,
+    "place_svg": cmd_place_svg,
 }
 
 

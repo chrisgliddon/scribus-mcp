@@ -343,6 +343,10 @@ def modify_object(
     line_spacing_mode: int | None = None,
     columns: int | None = None,
     column_gap: float | None = None,
+    corner_radius: float | None = None,
+    text_flow_mode: int | None = None,
+    fill_transparency: float | None = None,
+    line_style: int | None = None,
 ) -> str:
     """Modify properties of an existing object.
 
@@ -367,6 +371,10 @@ def modify_object(
         line_spacing_mode: 0=fixed, 1=automatic, 2=align to baseline grid (text frames only)
         columns: Number of text columns (text frames only)
         column_gap: Gap between columns in document units (text frames only)
+        corner_radius: Rounded corner radius in document units
+        text_flow_mode: Text flow around object: 0=none, 1=frame, 2=bbox, 3=contour
+        fill_transparency: Fill transparency 0.0 (opaque) to 1.0 (transparent)
+        line_style: Dash pattern style (1-37)
 
     """
     client = _get_client()
@@ -390,6 +398,10 @@ def modify_object(
         ("line_spacing_mode", line_spacing_mode),
         ("columns", columns),
         ("column_gap", column_gap),
+        ("corner_radius", corner_radius),
+        ("text_flow_mode", text_flow_mode),
+        ("fill_transparency", fill_transparency),
+        ("line_style", line_style),
     ]:
         if val is not None:
             params[key] = val
@@ -603,6 +615,13 @@ def get_object_properties(name: str) -> str:
         lines.append(f"  Line color: {result['line_color']}")
     if result.get("line_width"):
         lines.append(f"  Line width: {result['line_width']}")
+
+    if result.get("corner_radius"):
+        lines.append(f"  Corner radius: {result['corner_radius']}")
+    if result.get("text_flow_mode"):
+        lines.append(f"  Text flow mode: {result['text_flow_mode']}")
+    if result.get("fill_transparency"):
+        lines.append(f"  Fill transparency: {result['fill_transparency']}")
 
     return "\n".join(lines)
 
@@ -870,6 +889,411 @@ def list_master_pages() -> str:
     if names:
         return f"Master pages: {', '.join(names)}"
     return "No master pages defined."
+
+
+@mcp.tool()
+def edit_text(
+    name: str,
+    action: str,
+    text: str | None = None,
+    position: int | None = None,
+    start: int | None = None,
+    count: int | None = None,
+    style: str | None = None,
+) -> str:
+    """Edit text content within an existing text frame.
+
+    Args:
+        name: Text frame name
+        action: "insert", "apply_char_style", "apply_para_style", "hyphenate", "dehyphenate"
+        text: Text to insert (for "insert" action)
+        position: Character position for insertion (-1 = append)
+        start: Selection start position (for style actions)
+        count: Selection character count (for style actions)
+        style: Style name to apply (for style actions)
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"name": name, "action": action}
+    for key, val in [
+        ("text", text),
+        ("position", position),
+        ("start", start),
+        ("count", count),
+        ("style", style),
+    ]:
+        if val is not None:
+            params[key] = val
+
+    result = client.send_command("edit_text", params)
+    _save_after(result)
+    return f"Edited text in '{name}': {action}."
+
+
+@mcp.tool()
+def get_text_info(
+    name: str,
+    refresh_layout: bool = False,
+) -> str:
+    """Get text frame info: overflow count, character count, line count.
+
+    Args:
+        name: Text frame name
+        refresh_layout: Force layout recalculation before reading (default: False)
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"name": name}
+    if refresh_layout:
+        params["refresh_layout"] = True
+
+    result = client.send_command("get_text_info", params)
+    lines = [
+        f"Text frame '{name}':",
+        f"  Characters: {result['length']}",
+        f"  Lines: {result['lines']}",
+        f"  Overflow: {result['overflow']}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def manage_layers(
+    action: str,
+    layer: str | None = None,
+    name: str | None = None,
+    visible: bool | None = None,
+    locked: bool | None = None,
+    printable: bool | None = None,
+) -> str:
+    """Manage document layers.
+
+    Args:
+        action: "create", "delete", "list", "get_active", "set_active",
+            "send_to_layer", "set_properties", "get_properties"
+        layer: Layer name (required for most actions)
+        name: Object name (for "send_to_layer")
+        visible: Layer visibility (for "set_properties")
+        locked: Layer locked state (for "set_properties")
+        printable: Layer printable state (for "set_properties")
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"action": action}
+    for key, val in [
+        ("layer", layer),
+        ("name", name),
+        ("visible", visible),
+        ("locked", locked),
+        ("printable", printable),
+    ]:
+        if val is not None:
+            params[key] = val
+
+    result = client.send_command("manage_layers", params)
+
+    mutating = {"create", "delete", "set_active", "send_to_layer", "set_properties"}
+    if action in mutating:
+        _save_after(result)
+
+    if action == "list":
+        return f"Layers: {', '.join(result['layers'])}"
+    elif action == "get_active":
+        return f"Active layer: {result['layer']}"
+    elif action == "get_properties":
+        return (
+            f"Layer '{result['layer']}': "
+            f"visible={result['visible']}, locked={result['locked']}, "
+            f"printable={result['printable']}"
+        )
+    else:
+        return f"Layer action '{action}' completed."
+
+
+@mcp.tool()
+def organize_objects(
+    action: str,
+    names: list[str] | None = None,
+    name: str | None = None,
+) -> str:
+    """Group, ungroup, or reorder objects.
+
+    Args:
+        action: Operation - "group", "ungroup", "move_to_front", "move_to_back"
+        names: List of object names (for "group")
+        name: Single object name (for "ungroup", "move_to_front", "move_to_back")
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"action": action}
+    if names is not None:
+        params["names"] = names
+    if name is not None:
+        params["name"] = name
+
+    result = client.send_command("organize_objects", params)
+    _save_after(result)
+
+    if action == "group":
+        return f"Grouped objects into '{result['group_name']}'."
+    elif action == "ungroup":
+        return f"Ungrouped '{name}'."
+    else:
+        return f"Moved '{name}' to {action.replace('move_to_', '')}."
+
+
+@mcp.tool()
+def create_table(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rows: int,
+    columns: int,
+    page: int | None = None,
+) -> str:
+    """Create a table frame.
+
+    Args:
+        x: X position
+        y: Y position
+        w: Width
+        h: Height
+        rows: Number of rows
+        columns: Number of columns
+        page: Page number (1-based)
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {
+        "x": x, "y": y, "w": w, "h": h,
+        "rows": rows, "columns": columns,
+    }
+    if page is not None:
+        params["page"] = page
+
+    result = client.send_command("create_table", params)
+    _save_after(result)
+    return f"Created {rows}x{columns} table '{result['name']}' at ({x}, {y})."
+
+
+@mcp.tool()
+def modify_table_structure(
+    name: str,
+    action: str,
+    index: int | None = None,
+    count: int | None = None,
+    size: float | None = None,
+    row: int | None = None,
+    col: int | None = None,
+    num_rows: int | None = None,
+    num_cols: int | None = None,
+) -> str:
+    """Modify table structure: insert/remove rows/columns, resize, merge cells.
+
+    Args:
+        name: Table object name
+        action: "insert_rows", "insert_columns", "remove_rows",
+            "remove_columns", "resize_row", "resize_column", "merge_cells",
+            "get_size"
+        index: Row or column index (for insert/remove/resize)
+        count: Number of rows/columns to insert or remove
+        size: New size for resize operations
+        row: Starting row (for merge_cells)
+        col: Starting column (for merge_cells)
+        num_rows: Number of rows to merge
+        num_cols: Number of columns to merge
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"name": name, "action": action}
+    for key, val in [
+        ("index", index),
+        ("count", count),
+        ("size", size),
+        ("row", row),
+        ("col", col),
+        ("num_rows", num_rows),
+        ("num_cols", num_cols),
+    ]:
+        if val is not None:
+            params[key] = val
+
+    result = client.send_command("modify_table_structure", params)
+    if action != "get_size":
+        _save_after(result)
+
+    if action == "get_size":
+        return f"Table '{name}': {result['rows']} rows x {result['columns']} columns."
+    return f"Table '{name}': {action} completed."
+
+
+@mcp.tool()
+def set_table_content(
+    name: str,
+    cells: list[dict[str, Any]] | None = None,
+    get_cell: dict[str, int] | None = None,
+) -> str:
+    """Read or write text in table cells.
+
+    Args:
+        name: Table object name
+        cells: List of {"row": int, "col": int, "text": str} dicts for batch writing
+        get_cell: {"row": int, "col": int} dict to read a single cell
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"name": name}
+    if cells is not None:
+        params["cells"] = cells
+    if get_cell is not None:
+        params["get_cell"] = get_cell
+
+    result = client.send_command("set_table_content", params)
+    if cells:
+        _save_after(result)
+
+    if "text" in result:
+        return f"Cell ({result['row']}, {result['col']}): \"{result['text']}\""
+    return f"Wrote {result['cells_written']} cell(s) in table '{name}'."
+
+
+@mcp.tool()
+def style_table(
+    name: str,
+    table_fill_color: str | None = None,
+    table_style: str | None = None,
+    cells: list[dict[str, Any]] | None = None,
+) -> str:
+    """Style a table and its individual cells.
+
+    Args:
+        name: Table object name
+        table_fill_color: Background color for the entire table
+        table_style: Table style name to apply
+        cells: List of cell style dicts with row, col, fill_color, style,
+            border_top/bottom/left/right, padding_top/bottom/left/right
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"name": name}
+    if table_fill_color is not None:
+        params["table_fill_color"] = table_fill_color
+    if table_style is not None:
+        params["table_style"] = table_style
+    if cells is not None:
+        params["cells"] = cells
+
+    result = client.send_command("style_table", params)
+    _save_after(result)
+    return f"Styled table '{name}' ({result['cells_styled']} cell(s))."
+
+
+@mcp.tool()
+def control_image(
+    name: str,
+    action: str = "get",
+    offset_x: float | None = None,
+    offset_y: float | None = None,
+    scale_x: float | None = None,
+    scale_y: float | None = None,
+) -> str:
+    """Control image positioning and scaling within a frame.
+
+    Args:
+        name: Image frame name
+        action: "get", "set_offset", "set_scale", or "fit_frame_to_image"
+        offset_x: Horizontal offset (for set_offset)
+        offset_y: Vertical offset (for set_offset)
+        scale_x: Horizontal scale factor (for set_scale)
+        scale_y: Vertical scale factor (for set_scale)
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"name": name, "action": action}
+    for key, val in [
+        ("offset_x", offset_x),
+        ("offset_y", offset_y),
+        ("scale_x", scale_x),
+        ("scale_y", scale_y),
+    ]:
+        if val is not None:
+            params[key] = val
+
+    result = client.send_command("control_image", params)
+    if action != "get":
+        _save_after(result)
+
+    if action == "get":
+        return (
+            f"Image '{name}': offset=({result['offset_x']}, {result['offset_y']}), "
+            f"scale=({result['scale_x']}, {result['scale_y']})"
+        )
+    return f"Image '{name}': {action} completed."
+
+
+@mcp.tool()
+def delete_page(page: int) -> str:
+    """Delete a page from the document.
+
+    Args:
+        page: Page number (1-based) to delete
+
+    """
+    client = _get_client()
+    result = client.send_command("delete_page", {"page": page})
+    _save_after(result)
+    return f"Deleted page {page}. Document now has {result['total_pages']} pages."
+
+
+@mcp.tool()
+def get_font_names() -> str:
+    """Get a list of all available font names in Scribus."""
+    client = _get_client()
+    result = client.send_command("get_font_names", {})
+    fonts = result.get("fonts", [])
+    return f"Available fonts ({len(fonts)}): {', '.join(fonts)}"
+
+
+@mcp.tool()
+def duplicate_objects(names: list[str]) -> str:
+    """Duplicate one or more objects.
+
+    Args:
+        names: List of object names to duplicate
+
+    """
+    client = _get_client()
+    result = client.send_command("duplicate_objects", {"names": names})
+    _save_after(result)
+    new_names = result.get("new_names", [])
+    return f"Duplicated {len(new_names)} object(s): {', '.join(new_names)}."
+
+
+@mcp.tool()
+def place_svg(
+    file_path: str,
+    x: float,
+    y: float,
+    page: int | None = None,
+) -> str:
+    """Place an SVG file on the page.
+
+    Args:
+        file_path: Absolute path to the SVG file
+        x: X position
+        y: Y position
+        page: Page number (1-based)
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"file_path": file_path, "x": x, "y": y}
+    if page is not None:
+        params["page"] = page
+
+    result = client.send_command("place_svg", params)
+    _save_after(result)
+    return f"Placed SVG '{file_path}' as '{result['name']}' at ({x}, {y})."
 
 
 @mcp.tool()
