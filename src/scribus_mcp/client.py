@@ -25,6 +25,9 @@ BRIDGE_SCRIPT = Path(__file__).parent / "bridge.py"
 WORKSPACE_DIR = Path.home() / ".scribus-mcp" / "workspace"
 DOCUMENT_PATH = WORKSPACE_DIR / "document.sla"
 
+DEFAULT_COMMAND_TIMEOUT = 30  # seconds
+DEFAULT_STARTUP_TIMEOUT = 60  # seconds
+
 
 def find_scribus_executable() -> str:
     """Find the Scribus executable path."""
@@ -53,6 +56,13 @@ class ScribusClient:
         self._lock = threading.Lock()
         self._stderr_thread: threading.Thread | None = None
         self._document_path: Path | None = None
+
+        self._command_timeout = int(
+            os.environ.get("SCRIBUS_COMMAND_TIMEOUT", DEFAULT_COMMAND_TIMEOUT)
+        )
+        self._startup_timeout = int(
+            os.environ.get("SCRIBUS_STARTUP_TIMEOUT", DEFAULT_STARTUP_TIMEOUT)
+        )
 
         # Ensure workspace directory exists
         WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
@@ -93,13 +103,60 @@ class ScribusClient:
         except Exception:
             pass
 
+    def _readline_with_timeout(self, timeout: int) -> bytes:
+        """Read a line from stdout with a timeout.
+
+        Spawns a daemon thread for the blocking readline call and joins
+        with the given timeout.  If the timeout expires the process is
+        killed and a TimeoutError is raised.
+        """
+        if self._process is None or self._process.stdout is None:
+            raise ConnectionError("Scribus process not initialized")
+
+        result: list[bytes] = []
+        error: list[Exception] = []
+
+        def _read():
+            try:
+                result.append(self._process.stdout.readline())  # type: ignore[union-attr]
+            except Exception as exc:
+                error.append(exc)
+
+        t = threading.Thread(target=_read, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+
+        if t.is_alive():
+            logger.error("Scribus readline timed out after %ds, killing process", timeout)
+            self._kill_process()
+            raise TimeoutError(
+                f"Scribus did not respond within {timeout}s — process killed"
+            )
+
+        if error:
+            raise error[0]
+
+        return result[0] if result else b""
+
+    def _kill_process(self) -> None:
+        """Force-kill the Scribus subprocess and clean up."""
+        if self._process is None:
+            return
+        try:
+            self._process.kill()
+            self._process.wait(timeout=5)
+        except Exception:
+            pass
+        finally:
+            self._process = None
+
     def _wait_for_ready(self) -> None:
         """Read lines from stdout until we get the ready sentinel."""
         if self._process is None or self._process.stdout is None:
             raise ConnectionError("Scribus process not initialized")
 
         while True:
-            line = self._process.stdout.readline()
+            line = self._readline_with_timeout(self._startup_timeout)
             if not line:
                 raise ConnectionError("Scribus process exited before sending ready sentinel")
 
@@ -162,7 +219,9 @@ class ScribusClient:
 
             # Read response
             try:
-                response_line = self._process.stdout.readline()
+                response_line = self._readline_with_timeout(self._command_timeout)
+            except TimeoutError:
+                raise
             except OSError as e:
                 self._process = None
                 raise ConnectionError(f"Failed to read response from Scribus: {e}") from e

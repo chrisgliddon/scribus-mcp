@@ -8,7 +8,7 @@ MCP server for [Scribus](https://www.scribus.net/) — lets LLMs create professi
 Claude Code/Desktop ←(MCP stdio)→ server.py ←(subprocess NDJSON)→ Scribus -g -py bridge.py
 ```
 
-Scribus runs headless as a persistent subprocess. The bridge script executes inside Scribus's embedded Python, receives JSON commands over stdin, returns results over stdout. New documents auto-save to `~/.scribus-mcp/workspace/document.sla`; opened documents auto-save back to their original path.
+Scribus runs headless as a persistent subprocess. The bridge script executes inside Scribus's embedded Python, receives JSON commands over stdin, returns results over stdout. Mutations are auto-saved on a deferred 30-second timer (batching rapid changes into a single write). New documents save to `~/.scribus-mcp/workspace/document.sla`; opened documents save back to their original path.
 
 ## Prerequisites
 
@@ -234,7 +234,9 @@ uv run pytest tests/ -v
 npx @modelcontextprotocol/inspector uv run scribus-mcp
 ```
 
-## Custom Scribus Path
+## Configuration
+
+### Custom Scribus Path
 
 If Scribus isn't in a standard location:
 
@@ -256,13 +258,22 @@ set SCRIBUS_EXECUTABLE=C:\path\to\Scribus.exe
 $env:SCRIBUS_EXECUTABLE = "C:\path\to\Scribus.exe"
 ```
 
+### Timeouts and Save Interval
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCRIBUS_COMMAND_TIMEOUT` | `30` | Seconds to wait for a command response before killing Scribus |
+| `SCRIBUS_STARTUP_TIMEOUT` | `60` | Seconds to wait for the ready sentinel at startup |
+| `SCRIBUS_SAVE_INTERVAL` | `30` | Seconds between deferred auto-saves. Set to `0` to save after every command (legacy behavior) |
+
 ## How It Works
 
 1. On first tool call, `client.py` launches Scribus headless (`-g -ns -py bridge.py`)
 2. `bridge.py` redirects stdout to avoid protocol contamination, sends `{"ready": true}` sentinel
 3. Client sends NDJSON commands over stdin, reads JSON responses from stdout
-4. If Scribus crashes, next tool call auto-restarts the subprocess
-5. New documents auto-save to `~/.scribus-mcp/workspace/document.sla`; opened documents save back to their original path
+4. Each command has a timeout (default 30s) — if Scribus stalls, the process is killed and auto-restarted on the next call
+5. Mutations are batched into a deferred auto-save (default every 30s); a forced save runs before PDF export and at shutdown
+6. New documents save to `~/.scribus-mcp/workspace/document.sla`; opened documents save back to their original path
 
 ## License
 

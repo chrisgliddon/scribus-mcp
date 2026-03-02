@@ -48,16 +48,25 @@ from scribus_mcp.server import (
 
 @pytest.fixture(autouse=True)
 def mock_client():
-    """Replace the global client with a mock for all tests."""
+    """Replace the global client with a mock for all tests.
+
+    Sets SCRIBUS_SAVE_INTERVAL=0 (legacy mode) so existing tests that
+    assert save_document.assert_called_once() keep passing.
+    """
     mock = MagicMock()
     mock.send_command.return_value = {}
     mock.save_document.return_value = None
+
+    saved_interval = server_module._SAVE_INTERVAL
+    server_module._SAVE_INTERVAL = 0
 
     with (
         patch.object(server_module, "_client", mock),
         patch.object(server_module, "_get_client", return_value=mock),
     ):
         yield mock
+
+    server_module._SAVE_INTERVAL = saved_interval
 
 
 class TestCreateDocument:
@@ -1019,3 +1028,110 @@ class TestPlaceSvg:
         place_svg("/icon.svg", 0, 0, page=3)
         call_params = mock_client.send_command.call_args[0][1]
         assert call_params["page"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Deferred auto-save tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeferredSave:
+    """Tests for the _mark_dirty / _flush_save / _ensure_saved system."""
+
+    def test_mark_dirty_defers_save(self, mock_client):
+        """In deferred mode, _mark_dirty should NOT call save_document immediately."""
+        saved_interval = server_module._SAVE_INTERVAL
+        server_module._SAVE_INTERVAL = 30
+        try:
+            mock_client.save_document.reset_mock()
+            server_module._dirty = False
+            server_module._save_timer = None
+
+            server_module._mark_dirty()
+
+            mock_client.save_document.assert_not_called()
+            assert server_module._dirty is True
+        finally:
+            # Clean up timer
+            if server_module._save_timer is not None:
+                server_module._save_timer.cancel()
+                server_module._save_timer = None
+            server_module._dirty = False
+            server_module._SAVE_INTERVAL = saved_interval
+
+    def test_ensure_saved_forces_save(self, mock_client):
+        """_ensure_saved should immediately save when dirty."""
+        saved_interval = server_module._SAVE_INTERVAL
+        server_module._SAVE_INTERVAL = 30
+        try:
+            mock_client.save_document.reset_mock()
+            server_module._dirty = True
+            server_module._save_timer = None
+
+            server_module._ensure_saved()
+
+            mock_client.save_document.assert_called_once()
+            assert server_module._dirty is False
+        finally:
+            server_module._SAVE_INTERVAL = saved_interval
+
+    def test_ensure_saved_noop_when_clean(self, mock_client):
+        """_ensure_saved should not save when there are no pending changes."""
+        saved_interval = server_module._SAVE_INTERVAL
+        server_module._SAVE_INTERVAL = 30
+        try:
+            mock_client.save_document.reset_mock()
+            server_module._dirty = False
+            server_module._save_timer = None
+
+            server_module._ensure_saved()
+
+            mock_client.save_document.assert_not_called()
+        finally:
+            server_module._SAVE_INTERVAL = saved_interval
+
+    def test_legacy_mode_saves_immediately(self, mock_client):
+        """With SAVE_INTERVAL=0, _mark_dirty should save immediately."""
+        saved_interval = server_module._SAVE_INTERVAL
+        server_module._SAVE_INTERVAL = 0
+        try:
+            mock_client.save_document.reset_mock()
+
+            server_module._mark_dirty()
+
+            mock_client.save_document.assert_called_once()
+        finally:
+            server_module._SAVE_INTERVAL = saved_interval
+
+    def test_export_pdf_forces_save_first(self, mock_client):
+        """export_pdf should call _ensure_saved before exporting."""
+        saved_interval = server_module._SAVE_INTERVAL
+        server_module._SAVE_INTERVAL = 30
+        try:
+            server_module._dirty = True
+            server_module._save_timer = None
+            mock_client.save_document.reset_mock()
+            mock_client.send_command.return_value = {"file_path": "/tmp/out.pdf"}
+
+            export_pdf("/tmp/out.pdf")
+
+            mock_client.save_document.assert_called_once()
+            assert server_module._dirty is False
+        finally:
+            server_module._SAVE_INTERVAL = saved_interval
+
+    def test_flush_save_resets_dirty(self, mock_client):
+        """_flush_save should save and clear the dirty flag."""
+        saved_interval = server_module._SAVE_INTERVAL
+        server_module._SAVE_INTERVAL = 30
+        try:
+            mock_client.save_document.reset_mock()
+            server_module._dirty = True
+            server_module._save_timer = None
+
+            server_module._flush_save()
+
+            mock_client.save_document.assert_called_once()
+            assert server_module._dirty is False
+        finally:
+            server_module._SAVE_INTERVAL = saved_interval

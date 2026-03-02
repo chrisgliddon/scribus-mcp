@@ -1160,7 +1160,10 @@ def main():
     # Send ready sentinel
     _send({"ready": True})
 
-    for line in _real_stdin:
+    while True:
+        line = _real_stdin.readline()
+        if not line:
+            break
         line = line.strip()
         if not line:
             continue

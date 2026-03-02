@@ -2,6 +2,8 @@
 
 import atexit
 import logging
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -17,23 +19,77 @@ mcp = FastMCP("Scribus")
 # Lazy singleton client
 _client: ScribusClient | None = None
 
+# Deferred save state
+_dirty = False
+_dirty_lock = threading.Lock()
+_save_timer: threading.Timer | None = None
+_SAVE_INTERVAL = int(os.environ.get("SCRIBUS_SAVE_INTERVAL", 30))
+
 
 def _get_client() -> ScribusClient:
     """Get or create the ScribusClient singleton."""
     global _client
     if _client is None:
         _client = ScribusClient()
-        atexit.register(_client.shutdown)
+        atexit.register(_shutdown)
     return _client
 
 
-def _save_after(result):
-    """Save the document after a mutation."""
+def _mark_dirty():
+    """Mark the document as having unsaved changes and schedule a deferred save."""
+    global _dirty, _save_timer
+    if _SAVE_INTERVAL == 0:
+        # Legacy mode: save immediately
+        try:
+            _get_client().save_document()
+        except Exception as e:
+            logger.warning("Auto-save failed: %s", e)
+        return
+    with _dirty_lock:
+        _dirty = True
+        if _save_timer is None or not _save_timer.is_alive():
+            _save_timer = threading.Timer(_SAVE_INTERVAL, _flush_save)
+            _save_timer.daemon = True
+            _save_timer.start()
+
+
+def _flush_save():
+    """Periodic callback: save if dirty."""
+    global _dirty, _save_timer
+    with _dirty_lock:
+        if not _dirty:
+            return
+        _dirty = False
+        _save_timer = None
     try:
         _get_client().save_document()
+        logger.info("Deferred auto-save completed")
     except Exception as e:
-        logger.warning("Auto-save failed: %s", e)
-    return result
+        logger.warning("Deferred auto-save failed: %s", e)
+
+
+def _ensure_saved():
+    """Force an immediate save if there are pending changes."""
+    global _dirty, _save_timer
+    with _dirty_lock:
+        if _save_timer is not None:
+            _save_timer.cancel()
+            _save_timer = None
+        if not _dirty:
+            return
+        _dirty = False
+    try:
+        _get_client().save_document()
+        logger.info("Forced save completed")
+    except Exception as e:
+        logger.warning("Forced save failed: %s", e)
+
+
+def _shutdown():
+    """Ensure pending changes are saved, then shut down the client."""
+    _ensure_saved()
+    if _client is not None:
+        _client.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +163,7 @@ def create_document(
 
     result = client.send_command("create_document", params)
     client._document_path = None
-    _save_after(result)
+    _mark_dirty()
     w, h, u, p = result["width"], result["height"], result["unit"], result["pages"]
     return f"Created {w}x{h}{u} document with {p} page(s)."
 
@@ -145,8 +201,8 @@ def define_color(
     else:
         params.update({"r": r, "g": g, "b": b})
 
-    result = client.send_command("define_color", params)
-    _save_after(result)
+    client.send_command("define_color", params)
+    _mark_dirty()
 
     if mode == "cmyk":
         return f"Defined CMYK color '{name}' (C={c} M={m} Y={y} K={k})."
@@ -210,7 +266,7 @@ def place_text(
             params[key] = val
 
     result = client.send_command("place_text", params)
-    _save_after(result)
+    _mark_dirty()
 
     desc = f"Created text frame '{result['name']}' at ({x}, {y})"
     if text:
@@ -257,7 +313,7 @@ def place_image(
         params["page"] = page
 
     result = client.send_command("place_image", params)
-    _save_after(result)
+    _mark_dirty()
     return f"Placed image '{file_path}' in frame '{result['name']}' at ({x}, {y})."
 
 
@@ -319,7 +375,7 @@ def draw_shape(
         params["line_width"] = line_width
 
     result = client.send_command("draw_shape", params)
-    _save_after(result)
+    _mark_dirty()
     return f"Drew {result['shape']} '{result['name']}'."
 
 
@@ -407,7 +463,7 @@ def modify_object(
             params[key] = val
 
     result = client.send_command("modify_object", params)
-    _save_after(result)
+    _mark_dirty()
     modified = ", ".join(result.get("modified", []))
     return f"Modified '{name}': updated {modified}."
 
@@ -435,7 +491,7 @@ def add_page(
             "master_page": master_page,
         },
     )
-    _save_after(result)
+    _mark_dirty()
     return f"Added {result['added']} page(s). Document now has {result['total_pages']} pages."
 
 
@@ -479,6 +535,7 @@ def export_pdf(
         resolution: Custom DPI resolution (overrides quality preset)
 
     """
+    _ensure_saved()
     client = _get_client()
     params: dict[str, Any] = {"file_path": file_path, "quality": quality}
     if pdf_version is not None:
@@ -636,7 +693,7 @@ def delete_object(name: str) -> str:
     """
     client = _get_client()
     client.send_command("delete_object", {"name": name})
-    _save_after({})
+    _mark_dirty()
     return f"Deleted object '{name}'."
 
 
@@ -654,7 +711,7 @@ def set_baseline_grid(
     """
     client = _get_client()
     result = client.send_command("set_baseline_grid", {"grid": grid, "offset": offset})
-    _save_after(result)
+    _mark_dirty()
     return f"Set baseline grid: {result['grid']}pt spacing, {result['offset']}pt offset."
 
 
@@ -709,7 +766,7 @@ def create_paragraph_style(
             params[key] = val
 
     result = client.send_command("create_paragraph_style", params)
-    _save_after(result)
+    _mark_dirty()
     return f"Created paragraph style '{result['name']}'."
 
 
@@ -746,7 +803,7 @@ def create_char_style(
             params[key] = val
 
     result = client.send_command("create_char_style", params)
-    _save_after(result)
+    _mark_dirty()
     return f"Created character style '{result['name']}'."
 
 
@@ -763,10 +820,10 @@ def link_text_frames(
 
     """
     client = _get_client()
-    result = client.send_command(
+    client.send_command(
         "link_text_frames", {"from_frame": from_frame, "to_frame": to_frame}
     )
-    _save_after(result)
+    _mark_dirty()
     return f"Linked '{from_frame}' → '{to_frame}'."
 
 
@@ -781,8 +838,8 @@ def unlink_text_frames(
 
     """
     client = _get_client()
-    result = client.send_command("unlink_text_frames", {"frame": frame})
-    _save_after(result)
+    client.send_command("unlink_text_frames", {"frame": frame})
+    _mark_dirty()
     return f"Unlinked '{frame}'."
 
 
@@ -810,7 +867,7 @@ def set_guides(
         params["page"] = page
 
     result = client.send_command("set_guides", params)
-    _save_after(result)
+    _mark_dirty()
     parts = []
     if result.get("horizontal") is not None:
         parts.append(f"{len(result['horizontal'])} horizontal")
@@ -831,7 +888,7 @@ def create_master_page(
     """
     client = _get_client()
     result = client.send_command("create_master_page", {"name": name})
-    _save_after(result)
+    _mark_dirty()
     return f"Created master page '{result['name']}'."
 
 
@@ -847,7 +904,7 @@ def edit_master_page(
     """
     client = _get_client()
     result = client.send_command("edit_master_page", {"name": name})
-    _save_after(result)
+    _mark_dirty()
     return f"Editing master page '{result['name']}'."
 
 
@@ -856,7 +913,7 @@ def close_master_page() -> str:
     """Exit master page editing mode and return to normal editing."""
     client = _get_client()
     client.send_command("close_master_page", {})
-    _save_after({})
+    _mark_dirty()
     return "Closed master page editing."
 
 
@@ -873,10 +930,10 @@ def apply_master_page(
 
     """
     client = _get_client()
-    result = client.send_command(
+    client.send_command(
         "apply_master_page", {"master_page": master_page, "page": page}
     )
-    _save_after(result)
+    _mark_dirty()
     return f"Applied master page '{master_page}' to page {page}."
 
 
@@ -925,8 +982,8 @@ def edit_text(
         if val is not None:
             params[key] = val
 
-    result = client.send_command("edit_text", params)
-    _save_after(result)
+    client.send_command("edit_text", params)
+    _mark_dirty()
     return f"Edited text in '{name}': {action}."
 
 
@@ -994,7 +1051,7 @@ def manage_layers(
 
     mutating = {"create", "delete", "set_active", "send_to_layer", "set_properties"}
     if action in mutating:
-        _save_after(result)
+        _mark_dirty()
 
     if action == "list":
         return f"Layers: {', '.join(result['layers'])}"
@@ -1032,7 +1089,7 @@ def organize_objects(
         params["name"] = name
 
     result = client.send_command("organize_objects", params)
-    _save_after(result)
+    _mark_dirty()
 
     if action == "group":
         return f"Grouped objects into '{result['group_name']}'."
@@ -1073,7 +1130,7 @@ def create_table(
         params["page"] = page
 
     result = client.send_command("create_table", params)
-    _save_after(result)
+    _mark_dirty()
     return f"Created {rows}x{columns} table '{result['name']}' at ({x}, {y})."
 
 
@@ -1121,7 +1178,7 @@ def modify_table_structure(
 
     result = client.send_command("modify_table_structure", params)
     if action != "get_size":
-        _save_after(result)
+        _mark_dirty()
 
     if action == "get_size":
         return f"Table '{name}': {result['rows']} rows x {result['columns']} columns."
@@ -1151,7 +1208,7 @@ def set_table_content(
 
     result = client.send_command("set_table_content", params)
     if cells:
-        _save_after(result)
+        _mark_dirty()
 
     if "text" in result:
         return f"Cell ({result['row']}, {result['col']}): \"{result['text']}\""
@@ -1185,7 +1242,7 @@ def style_table(
         params["cells"] = cells
 
     result = client.send_command("style_table", params)
-    _save_after(result)
+    _mark_dirty()
     return f"Styled table '{name}' ({result['cells_styled']} cell(s))."
 
 
@@ -1222,7 +1279,7 @@ def control_image(
 
     result = client.send_command("control_image", params)
     if action != "get":
-        _save_after(result)
+        _mark_dirty()
 
     if action == "get":
         return (
@@ -1242,7 +1299,7 @@ def delete_page(page: int) -> str:
     """
     client = _get_client()
     result = client.send_command("delete_page", {"page": page})
-    _save_after(result)
+    _mark_dirty()
     return f"Deleted page {page}. Document now has {result['total_pages']} pages."
 
 
@@ -1265,7 +1322,7 @@ def duplicate_objects(names: list[str]) -> str:
     """
     client = _get_client()
     result = client.send_command("duplicate_objects", {"names": names})
-    _save_after(result)
+    _mark_dirty()
     new_names = result.get("new_names", [])
     return f"Duplicated {len(new_names)} object(s): {', '.join(new_names)}."
 
@@ -1292,7 +1349,7 @@ def place_svg(
         params["page"] = page
 
     result = client.send_command("place_svg", params)
-    _save_after(result)
+    _mark_dirty()
     return f"Placed SVG '{file_path}' as '{result['name']}' at ({x}, {y})."
 
 
@@ -1309,7 +1366,7 @@ def run_script(code: str) -> str:
     """
     client = _get_client()
     result = client.send_command("run_script", {"code": code})
-    _save_after(result)
+    _mark_dirty()
 
     script_result = result.get("result")
     if script_result is not None:

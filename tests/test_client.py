@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -255,3 +256,149 @@ class TestScribusClient:
         client._ensure_running()
         client.shutdown()
         process.kill.assert_called_once()
+
+
+class TestTimeouts:
+    """Tests for command timeout and auto-restart after timeout."""
+
+    def _make_mock_process(self, responses=None):
+        """Create a mock subprocess that responds with given JSON responses."""
+        process = MagicMock()
+        process.poll.return_value = None
+        process.stdin = MagicMock()
+        process.stderr = MagicMock()
+        process.stderr.__iter__ = MagicMock(return_value=iter([]))
+
+        lines = [json.dumps({"ready": True}).encode() + b"\n"]
+        for resp in responses or []:
+            lines.append(json.dumps(resp).encode() + b"\n")
+
+        line_iter = iter(lines)
+        process.stdout = MagicMock()
+        process.stdout.readline = lambda: next(line_iter, b"")
+
+        return process
+
+    @patch("scribus_mcp.client.find_scribus_executable")
+    @patch("subprocess.Popen")
+    def test_timeout_kills_process(self, mock_popen, mock_find):
+        """Verify TimeoutError is raised and process is killed when command hangs."""
+        mock_find.return_value = "/usr/bin/scribus"
+
+        # Process that hangs on the command response (blocks forever on readline)
+        hang_event = threading.Event()
+
+        def hanging_readline():
+            if not hang_event.is_set():
+                # First call returns the ready sentinel
+                hang_event.set()
+                return json.dumps({"ready": True}).encode() + b"\n"
+            # Second call (command response) hangs until timeout
+            threading.Event().wait(timeout=10)
+            return b""
+
+        process = MagicMock()
+        process.poll.return_value = None
+        process.stdin = MagicMock()
+        process.stderr = MagicMock()
+        process.stderr.__iter__ = MagicMock(return_value=iter([]))
+        process.stdout = MagicMock()
+        process.stdout.readline = hanging_readline
+        process.kill.return_value = None
+        process.wait.return_value = 0
+        mock_popen.return_value = process
+
+        client = ScribusClient()
+        client._command_timeout = 1  # 1 second timeout for fast test
+
+        with pytest.raises(TimeoutError, match="did not respond"):
+            client.send_command("create_document")
+
+        process.kill.assert_called_once()
+        assert client._process is None
+
+    @patch("scribus_mcp.client.find_scribus_executable")
+    @patch("subprocess.Popen")
+    def test_auto_restart_after_timeout(self, mock_popen, mock_find):
+        """Verify next command restarts Scribus after a timeout kills it."""
+        mock_find.return_value = "/usr/bin/scribus"
+
+        # First process hangs
+        hang_event = threading.Event()
+
+        def hanging_readline():
+            if not hang_event.is_set():
+                hang_event.set()
+                return json.dumps({"ready": True}).encode() + b"\n"
+            threading.Event().wait(timeout=10)
+            return b""
+
+        process1 = MagicMock()
+        process1.poll.return_value = None
+        process1.stdin = MagicMock()
+        process1.stderr = MagicMock()
+        process1.stderr.__iter__ = MagicMock(return_value=iter([]))
+        process1.stdout = MagicMock()
+        process1.stdout.readline = hanging_readline
+        process1.kill.return_value = None
+        process1.wait.return_value = 0
+
+        # Second process works normally
+        process2 = self._make_mock_process([{"ok": True, "result": {"pages": 1}}])
+
+        mock_popen.side_effect = [process1, process2]
+
+        client = ScribusClient()
+        client._command_timeout = 1
+
+        # First call times out
+        with pytest.raises(TimeoutError):
+            client.send_command("create_document")
+
+        assert client._process is None
+
+        # Next call should restart and succeed
+        result = client.send_command("get_document_info")
+        assert result == {"pages": 1}
+        assert mock_popen.call_count == 2
+
+    @patch("scribus_mcp.client.find_scribus_executable")
+    @patch("subprocess.Popen")
+    def test_startup_timeout(self, mock_popen, mock_find):
+        """Verify _wait_for_ready times out if ready sentinel never arrives."""
+        mock_find.return_value = "/usr/bin/scribus"
+
+        def hanging_readline():
+            threading.Event().wait(timeout=10)
+            return b""
+
+        process = MagicMock()
+        process.poll.return_value = None
+        process.stdin = MagicMock()
+        process.stderr = MagicMock()
+        process.stderr.__iter__ = MagicMock(return_value=iter([]))
+        process.stdout = MagicMock()
+        process.stdout.readline = hanging_readline
+        process.kill.return_value = None
+        process.wait.return_value = 0
+        mock_popen.return_value = process
+
+        client = ScribusClient()
+        client._startup_timeout = 1
+
+        with pytest.raises(TimeoutError, match="did not respond"):
+            client.send_command("create_document")
+
+        process.kill.assert_called_once()
+
+    def test_env_var_overrides_timeout(self):
+        """Verify SCRIBUS_COMMAND_TIMEOUT env var is respected."""
+        with patch.dict("os.environ", {"SCRIBUS_COMMAND_TIMEOUT": "42"}):
+            client = ScribusClient()
+            assert client._command_timeout == 42
+
+    def test_env_var_overrides_startup_timeout(self):
+        """Verify SCRIBUS_STARTUP_TIMEOUT env var is respected."""
+        with patch.dict("os.environ", {"SCRIBUS_STARTUP_TIMEOUT": "120"}):
+            client = ScribusClient()
+            assert client._startup_timeout == 120
