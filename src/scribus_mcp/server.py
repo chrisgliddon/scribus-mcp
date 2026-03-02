@@ -2,6 +2,7 @@
 
 import atexit
 import logging
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -105,6 +106,7 @@ def create_document(
         params["margin_right"] = margin_right
 
     result = client.send_command("create_document", params)
+    client._document_path = None
     _save_after(result)
     w, h, u, p = result["width"], result["height"], result["unit"], result["pages"]
     return f"Created {w}x{h}{u} document with {p} page(s)."
@@ -497,7 +499,10 @@ def export_pdf(
 
 @mcp.tool()
 def get_document_info() -> str:
-    """Get information about the current document including pages, objects, colors, margins, master pages, and styles."""
+    """Get information about the current document.
+
+    Includes pages, objects, colors, margins, master pages, and styles.
+    """
     client = _get_client()
     result = client.send_command("get_document_info", {})
 
@@ -532,6 +537,88 @@ def get_document_info() -> str:
         lines.append(f"Character styles: {', '.join(result['char_styles'])}")
 
     return "\n".join(lines)
+
+
+@mcp.tool()
+def open_document(file_path: str) -> str:
+    """Open an existing Scribus .sla document for inspection and editing.
+
+    Args:
+        file_path: Absolute path to the .sla file to open
+
+    """
+    client = _get_client()
+    result = client.send_command("open_document", {"file_path": file_path})
+    client._document_path = Path(file_path)
+
+    lines = [f"Opened '{file_path}' ({result['page_count']} page(s))."]
+    if result.get("pages"):
+        lines.append("Pages:")
+        for p in result["pages"]:
+            lines.append(f"  Page {p['number']}: {p['width']}x{p['height']}")
+    if result.get("objects"):
+        lines.append(f"Objects ({len(result['objects'])}):")
+        for obj in result["objects"]:
+            lines.append(f"  {obj['name']} (type={obj['type']}, page={obj['page']})")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_object_properties(name: str) -> str:
+    """Get detailed properties of a named object in the document.
+
+    Returns position, size, rotation, and type-specific properties
+    (text content, font, colors, etc.).
+
+    Args:
+        name: Object name (as returned by create functions or get_document_info)
+
+    """
+    client = _get_client()
+    result = client.send_command("get_object_properties", {"name": name})
+
+    obj_type = result["type"]
+    lines = [
+        f"Object '{name}' ({obj_type})",
+        f"  Position: ({result['x']}, {result['y']})",
+        f"  Size: {result['w']} x {result['h']}",
+    ]
+    if result.get("rotation"):
+        lines.append(f"  Rotation: {result['rotation']}°")
+
+    if obj_type == "text":
+        text = result.get("text", "")
+        preview = text[:80] + "..." if len(text) > 80 else text
+        lines.append(f'  Text: "{preview}"')
+        if result.get("font"):
+            lines.append(f"  Font: {result['font']} {result.get('font_size', '')}pt")
+        if result.get("text_color"):
+            lines.append(f"  Text color: {result['text_color']}")
+        if result.get("columns", 1) > 1:
+            lines.append(f"  Columns: {result['columns']} (gap: {result.get('column_gap', 0)})")
+
+    if obj_type in ("text", "image", "shape") and result.get("fill_color"):
+        lines.append(f"  Fill: {result['fill_color']}")
+    if result.get("line_color"):
+        lines.append(f"  Line color: {result['line_color']}")
+    if result.get("line_width"):
+        lines.append(f"  Line width: {result['line_width']}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def delete_object(name: str) -> str:
+    """Delete a named object from the document.
+
+    Args:
+        name: Object name to delete
+
+    """
+    client = _get_client()
+    client.send_command("delete_object", {"name": name})
+    _save_after({})
+    return f"Deleted object '{name}'."
 
 
 @mcp.tool()

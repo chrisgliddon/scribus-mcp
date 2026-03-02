@@ -24,13 +24,16 @@ from scribus_mcp.bridge import (  # noqa: E402
     cmd_create_master_page,
     cmd_create_paragraph_style,
     cmd_define_color,
+    cmd_delete_object,
     cmd_draw_shape,
     cmd_edit_master_page,
     cmd_export_pdf,
     cmd_get_document_info,
+    cmd_get_object_properties,
     cmd_link_text_frames,
     cmd_list_master_pages,
     cmd_modify_object,
+    cmd_open_document,
     cmd_place_image,
     cmd_place_text,
     cmd_run_script,
@@ -136,14 +139,30 @@ class TestCmdCreateDocument:
 
     def test_facing_pages(self):
         cmd_create_document({"facing_pages": True})
-        # pagesType should be 1 for facing pages
-        # firstPageOrder should be 1 for right-start (default when facing)
         doc = mock_scribus._doc
         assert doc is not None
+        assert doc.page_type == 1
+        assert doc.first_page_order == 1
 
     def test_first_page_left(self):
         cmd_create_document({"facing_pages": True, "first_page_left": True})
-        assert mock_scribus._doc is not None
+        doc = mock_scribus._doc
+        assert doc is not None
+        assert doc.first_page_order == 0
+
+    def test_facing_pages_sets_page_type(self):
+        cmd_create_document({"facing_pages": True})
+        assert mock_scribus._doc.page_type == 1
+        assert mock_scribus._doc.first_page_order == 1
+
+    def test_first_page_left_sets_order(self):
+        cmd_create_document({"facing_pages": True, "first_page_left": True})
+        assert mock_scribus._doc.first_page_order == 0
+
+    def test_first_page_left_without_facing(self):
+        cmd_create_document({"facing_pages": False, "first_page_left": True})
+        assert mock_scribus._doc.first_page_order == 0
+        assert mock_scribus._doc.page_type == 0
 
     def test_bleeds(self):
         cmd_create_document(
@@ -434,6 +453,158 @@ class TestCmdModifyObject:
         assert obj["column_gap"] == 4
 
 
+class TestCmdOpenDocument:
+    def test_empty_doc(self):
+        result = cmd_open_document({"file_path": "/tmp/test.sla"})
+        assert result["file_path"] == "/tmp/test.sla"
+        assert result["page_count"] == 1
+        assert len(result["objects"]) == 0
+        assert mock_scribus._doc is not None
+
+    def test_closes_existing_first(self):
+        _create_doc()
+        assert mock_scribus._doc is not None
+        result = cmd_open_document({"file_path": "/tmp/other.sla"})
+        assert result["file_path"] == "/tmp/other.sla"
+        assert mock_scribus._doc is not None
+
+    def test_no_prior_doc(self):
+        # No doc exists — should open without error
+        assert mock_scribus._doc is None
+        result = cmd_open_document({"file_path": "/tmp/new.sla"})
+        assert result["page_count"] == 1
+
+    def test_pre_registered_document(self):
+        mock_scribus._register_mock_document("/tmp/layout.sla", {
+            "size": (245, 290),
+            "margins": (20, 15, 17, 20),
+            "num_pages": 2,
+            "objects": [
+                {
+                    "name": "title_frame", "type": 4, "page": 1,
+                    "x": 20, "y": 20, "w": 200, "h": 40, "text": "Hello",
+                },
+                {"name": "logo", "type": 2, "page": 1, "x": 50, "y": 80, "w": 100, "h": 100},
+            ],
+        })
+        result = cmd_open_document({"file_path": "/tmp/layout.sla"})
+        assert result["page_count"] == 2
+        assert len(result["objects"]) == 2
+        assert result["objects"][0]["name"] == "title_frame"
+        assert result["objects"][1]["name"] == "logo"
+        # Verify the objects are accessible
+        assert mock_scribus._doc.objects["title_frame"]["text"] == "Hello"
+
+
+class TestCmdGetObjectProperties:
+    def test_text_frame(self):
+        _create_doc()
+        frame = cmd_place_text({
+            "x": 10, "y": 20, "w": 180, "h": 50,
+            "text": "Hello World", "font": "Arial Regular",
+            "font_size": 14, "color": "Black",
+        })
+        result = cmd_get_object_properties({"name": frame["name"]})
+        assert result["type"] == "text"
+        assert result["x"] == 10
+        assert result["y"] == 20
+        assert result["w"] == 180
+        assert result["h"] == 50
+        assert result["text"] == "Hello World"
+        assert result["font"] == "Arial Regular"
+        assert result["font_size"] == 14
+        assert result["text_color"] == "Black"
+
+    def test_image_frame(self):
+        _create_doc()
+        frame = cmd_place_image({"x": 5, "y": 10, "w": 100, "h": 80, "file_path": "/img.png"})
+        result = cmd_get_object_properties({"name": frame["name"]})
+        assert result["type"] == "image"
+        assert result["x"] == 5
+        assert result["y"] == 10
+        assert "fill_color" in result
+        assert "line_color" in result
+
+    def test_shape_with_colors(self):
+        _create_doc()
+        shape = cmd_draw_shape({
+            "shape": "rectangle", "x": 0, "y": 0, "w": 50, "h": 50,
+            "fill_color": "Red", "line_color": "Blue", "line_width": 2.0,
+        })
+        result = cmd_get_object_properties({"name": shape["name"]})
+        assert result["type"] == "shape"
+        assert result["fill_color"] == "Red"
+        assert result["line_color"] == "Blue"
+        assert result["line_width"] == 2.0
+
+    def test_line(self):
+        _create_doc()
+        line = cmd_draw_shape({"shape": "line", "x1": 0, "y1": 0, "x2": 100, "y2": 200})
+        result = cmd_get_object_properties({"name": line["name"]})
+        assert result["type"] == "line"
+        assert "line_color" in result
+        assert "line_width" in result
+        # Lines should not have fill_color
+        assert "fill_color" not in result
+
+    def test_object_not_found(self):
+        _create_doc()
+        with pytest.raises(ValueError, match="Object not found"):
+            cmd_get_object_properties({"name": "nonexistent"})
+
+    def test_rotation(self):
+        _create_doc()
+        frame = cmd_place_text({"x": 0, "y": 0, "w": 50, "h": 50})
+        cmd_modify_object({"name": frame["name"], "rotation": 45})
+        result = cmd_get_object_properties({"name": frame["name"]})
+        assert result["rotation"] == 45
+
+    def test_columns(self):
+        _create_doc()
+        frame = cmd_place_text({
+            "x": 0, "y": 0, "w": 100, "h": 50,
+            "columns": 3, "column_gap": 5,
+        })
+        result = cmd_get_object_properties({"name": frame["name"]})
+        assert result["columns"] == 3
+        assert result["column_gap"] == 5
+
+
+class TestCmdDeleteObject:
+    def test_delete_text_frame(self):
+        _create_doc()
+        frame = cmd_place_text({"x": 0, "y": 0, "w": 50, "h": 50, "text": "Delete me"})
+        name = frame["name"]
+        result = cmd_delete_object({"name": name})
+        assert result["deleted"] is True
+        assert result["name"] == name
+        assert name not in mock_scribus._doc.objects
+        assert all(item["name"] != name for item in mock_scribus._doc.items)
+
+    def test_delete_shape(self):
+        _create_doc()
+        shape = cmd_draw_shape({"shape": "rectangle"})
+        name = shape["name"]
+        cmd_delete_object({"name": name})
+        assert name not in mock_scribus._doc.objects
+
+    def test_nonexistent_raises(self):
+        _create_doc()
+        with pytest.raises(ValueError, match="Object not found"):
+            cmd_delete_object({"name": "ghost"})
+
+    def test_delete_one_of_many(self):
+        _create_doc()
+        f1 = cmd_place_text({"x": 0, "y": 0, "w": 50, "h": 50})
+        f2 = cmd_place_text({"x": 60, "y": 0, "w": 50, "h": 50})
+        f3 = cmd_draw_shape({"shape": "rectangle"})
+        cmd_delete_object({"name": f2["name"]})
+        assert f1["name"] in mock_scribus._doc.objects
+        assert f2["name"] not in mock_scribus._doc.objects
+        assert f3["name"] in mock_scribus._doc.objects
+        assert len(mock_scribus._doc.items) == 2
+
+
 class TestCmdAddPage:
     def test_add_one(self):
         _create_doc()
@@ -456,8 +627,15 @@ class TestCmdAddPage:
 class TestCmdCreateParagraphStyle:
     def test_basic(self):
         _create_doc()
-        result = cmd_create_paragraph_style({"name": "Body", "font": "DejaVu Serif", "font_size": 9.5})
+        result = cmd_create_paragraph_style(
+            {"name": "Body", "font": "DejaVu Serif", "font_size": 9.5}
+        )
         assert result["name"] == "Body"
+
+    def test_name_only(self):
+        _create_doc()
+        result = cmd_create_paragraph_style({"name": "Minimal"})
+        assert result["name"] == "Minimal"
 
     def test_full_options(self):
         _create_doc()
@@ -483,6 +661,11 @@ class TestCmdCreateCharStyle:
         _create_doc()
         result = cmd_create_char_style({"name": "Emphasis", "font": "Arial Italic"})
         assert result["name"] == "Emphasis"
+
+    def test_name_only(self):
+        _create_doc()
+        result = cmd_create_char_style({"name": "Minimal"})
+        assert result["name"] == "Minimal"
 
     def test_full_options(self):
         _create_doc()
@@ -658,6 +841,11 @@ class TestCmdSetGuides:
         assert result["horizontal"] == [50, 100]
         assert mock_scribus._doc.h_guides[1] == [50, 100]
 
+    def test_empty_guides(self):
+        _create_doc()
+        cmd_set_guides({"horizontal": []})
+        assert mock_scribus._doc.h_guides[1] == []
+
     def test_vertical(self):
         _create_doc()
         result = cmd_set_guides({"vertical": [30, 60]})
@@ -666,7 +854,7 @@ class TestCmdSetGuides:
 
     def test_both_with_page(self):
         _create_doc(pages=2)
-        result = cmd_set_guides({"horizontal": [50], "vertical": [30], "page": 2})
+        cmd_set_guides({"horizontal": [50], "vertical": [30], "page": 2})
         assert mock_scribus._doc.h_guides[2] == [50]
         assert mock_scribus._doc.v_guides[2] == [30]
 
@@ -807,11 +995,14 @@ class TestCommandDispatch:
     def test_all_handlers_registered(self):
         expected = {
             "create_document",
+            "open_document",
             "define_color",
             "place_text",
             "place_image",
             "draw_shape",
             "modify_object",
+            "get_object_properties",
+            "delete_object",
             "add_page",
             "export_pdf",
             "get_document_info",

@@ -14,13 +14,16 @@ from scribus_mcp.server import (
     create_master_page,
     create_paragraph_style,
     define_color,
+    delete_object,
     draw_shape,
     edit_master_page,
     export_pdf,
     get_document_info,
+    get_object_properties,
     link_text_frames,
     list_master_pages,
     modify_object,
+    open_document,
     place_image,
     place_text,
     run_script,
@@ -96,6 +99,17 @@ class TestCreateDocument:
         create_document(width=245, height=290, facing_pages=True, pages=4)
         call_params = mock_client.send_command.call_args[0][1]
         assert call_params["facing_pages"] is True
+
+    def test_first_page_left(self, mock_client):
+        mock_client.send_command.return_value = {
+            "width": 210,
+            "height": 297,
+            "unit": "mm",
+            "pages": 1,
+        }
+        create_document(facing_pages=True, first_page_left=True)
+        call_params = mock_client.send_command.call_args[0][1]
+        assert call_params["first_page_left"] is True
 
     def test_bleeds(self, mock_client):
         mock_client.send_command.return_value = {
@@ -367,6 +381,106 @@ class TestRunScript:
         mock_client.send_command.return_value = {"result": None}
         result = run_script("scribus.gotoPage(1)")
         assert "successfully" in result
+
+
+class TestOpenDocument:
+    def test_basic_open(self, mock_client):
+        mock_client.send_command.return_value = {
+            "file_path": "/tmp/layout.sla",
+            "page_count": 2,
+            "pages": [
+                {"number": 1, "width": 210, "height": 297},
+                {"number": 2, "width": 210, "height": 297},
+            ],
+            "objects": [
+                {"name": "text_1", "type": 4, "page": 1},
+            ],
+        }
+        result = open_document("/tmp/layout.sla")
+        assert "2 page(s)" in result
+        assert "text_1" in result
+        mock_client.send_command.assert_called_once_with(
+            "open_document", {"file_path": "/tmp/layout.sla"}
+        )
+
+    def test_empty_doc(self, mock_client):
+        mock_client.send_command.return_value = {
+            "file_path": "/tmp/empty.sla",
+            "page_count": 1,
+            "pages": [{"number": 1, "width": 210, "height": 297}],
+            "objects": [],
+        }
+        result = open_document("/tmp/empty.sla")
+        assert "1 page(s)" in result
+        assert "Objects" not in result
+
+    def test_does_not_auto_save(self, mock_client):
+        mock_client.send_command.return_value = {
+            "file_path": "/tmp/doc.sla",
+            "page_count": 1,
+            "pages": [],
+            "objects": [],
+        }
+        open_document("/tmp/doc.sla")
+        mock_client.save_document.assert_not_called()
+
+
+class TestGetObjectProperties:
+    def test_text_frame(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "text_1",
+            "type": "text",
+            "x": 10,
+            "y": 20,
+            "w": 180,
+            "h": 50,
+            "rotation": 0,
+            "text": "Hello World",
+            "font": "Arial Regular",
+            "font_size": 14,
+            "text_color": "Black",
+            "fill_color": "None",
+            "line_color": "Black",
+            "line_width": 1.0,
+            "columns": 1,
+            "column_gap": 0,
+        }
+        result = get_object_properties("text_1")
+        assert "text_1" in result
+        assert "text" in result
+        assert "Hello World" in result
+        mock_client.send_command.assert_called_once_with(
+            "get_object_properties", {"name": "text_1"}
+        )
+
+    def test_does_not_auto_save(self, mock_client):
+        mock_client.send_command.return_value = {
+            "name": "obj_1",
+            "type": "shape",
+            "x": 0, "y": 0, "w": 50, "h": 50,
+            "rotation": 0,
+            "fill_color": "Red",
+            "line_color": "Black",
+            "line_width": 1.0,
+        }
+        get_object_properties("obj_1")
+        mock_client.save_document.assert_not_called()
+
+
+class TestDeleteObject:
+    def test_basic_delete(self, mock_client):
+        mock_client.send_command.return_value = {"name": "text_1", "deleted": True}
+        result = delete_object("text_1")
+        assert "Deleted" in result
+        assert "text_1" in result
+        mock_client.send_command.assert_called_once_with(
+            "delete_object", {"name": "text_1"}
+        )
+
+    def test_auto_saves(self, mock_client):
+        mock_client.send_command.return_value = {"name": "text_1", "deleted": True}
+        delete_object("text_1")
+        mock_client.save_document.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

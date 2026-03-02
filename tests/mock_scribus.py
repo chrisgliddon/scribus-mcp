@@ -21,6 +21,7 @@ _doc = None
 _counter = 0
 _saved_path = None
 _last_pdf = None
+_mock_documents = {}  # path -> doc_data for openDoc
 
 
 def _next_name(prefix="obj"):
@@ -31,11 +32,17 @@ def _next_name(prefix="obj"):
 
 def _reset():
     """Reset all state (call between tests)."""
-    global _doc, _counter, _saved_path, _last_pdf
+    global _doc, _counter, _saved_path, _last_pdf, _mock_documents
     _doc = None
     _counter = 0
     _saved_path = None
     _last_pdf = None
+    _mock_documents = {}
+
+
+def _register_mock_document(path, doc_data):
+    """Register a pre-populated document state for openDoc to load."""
+    _mock_documents[path] = doc_data
 
 
 class _Document:
@@ -47,6 +54,8 @@ class _Document:
         self.orientation = orientation
         self.unit = unit
         self.pages = [{"number": i + 1, "size": size} for i in range(num_pages)]
+        self.page_type = page_type
+        self.first_page_order = first_page_order
         self.items = []
         self.colors = ["Black", "White"]
         self.current_page = 1
@@ -240,6 +249,72 @@ def getSize(name):
     return (0, 0)
 
 
+def getText(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("text", "")
+    return ""
+
+
+def getAllText(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("text", "")
+    return ""
+
+
+def getFont(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("font", "")
+    return ""
+
+
+def getFontSize(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("font_size", 12.0)
+    return 12.0
+
+
+def getTextColor(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("color", "Black")
+    return "Black"
+
+
+def getRotation(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("rotation", 0.0)
+    return 0.0
+
+
+def getFillColor(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("fill_color", "None")
+    return "None"
+
+
+def getLineColor(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("line_color", "Black")
+    return "Black"
+
+
+def getLineWidth(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("line_width", 1.0)
+    return 1.0
+
+
+def getColumns(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("columns", 1)
+    return 1
+
+
+def getColumnGap(name):
+    if _doc and name in _doc.objects:
+        return _doc.objects[name].get("column_gap", 0.0)
+    return 0.0
+
+
 def moveObjectAbs(x, y, name):
     if _doc and name in _doc.objects:
         _doc.objects[name]["x"] = x
@@ -292,6 +367,32 @@ def closeDoc():
     _doc = None
 
 
+def openDoc(path):
+    global _doc
+    if path in _mock_documents:
+        data = _mock_documents[path]
+        size = data.get("size", (210, 297))
+        margins = data.get("margins", (20, 20, 20, 20))
+        _doc = _Document(size, margins, 0, 1, UNIT_MILLIMETERS, 0, 0, data.get("num_pages", 1))
+        for obj in data.get("objects", []):
+            obj_copy = dict(obj)
+            name = obj_copy["name"]
+            _doc.items.append(obj_copy)
+            _doc.objects[name] = obj_copy
+    else:
+        # Minimal empty document
+        _doc = _Document((210, 297), (20, 20, 20, 20), 0, 1, UNIT_MILLIMETERS, 0, 0, 1)
+
+
+def deleteObject(name):
+    if _doc is None:
+        raise Exception("No document open")
+    if name not in _doc.objects:
+        raise ValueError(f"Object not found: {name}")
+    del _doc.objects[name]
+    _doc.items = [item for item in _doc.items if item["name"] != name]
+
+
 # ---------------------------------------------------------------------------
 # Phase 1: Bleeds + baseline grid
 # ---------------------------------------------------------------------------
@@ -335,7 +436,6 @@ def setColumnGap(gap, name):
 
 def createParagraphStyle(**kwargs):
     if _doc:
-        name = kwargs.get("name", "unnamed")
         if not hasattr(_doc, "paragraph_styles"):
             _doc.paragraph_styles = []
         _doc.paragraph_styles.append(kwargs)
@@ -343,7 +443,6 @@ def createParagraphStyle(**kwargs):
 
 def createCharStyle(**kwargs):
     if _doc:
-        name = kwargs.get("name", "unnamed")
         if not hasattr(_doc, "char_styles"):
             _doc.char_styles = []
         _doc.char_styles.append(kwargs)
@@ -390,11 +489,10 @@ def linkTextFrames(from_name, to_name):
 
 
 def unlinkTextFrames(name):
-    if _doc:
-        if hasattr(_doc, "linked_frames"):
-            _doc.linked_frames = [
-                pair for pair in _doc.linked_frames if pair[0] != name
-            ]
+    if _doc and hasattr(_doc, "linked_frames"):
+        _doc.linked_frames = [
+            pair for pair in _doc.linked_frames if pair[0] != name
+        ]
 
 
 def setHGuides(guides):

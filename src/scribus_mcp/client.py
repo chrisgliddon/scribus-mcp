@@ -52,6 +52,7 @@ class ScribusClient:
         self._process: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._stderr_thread: threading.Thread | None = None
+        self._document_path: Path | None = None
 
         # Ensure workspace directory exists
         WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
@@ -185,8 +186,9 @@ class ScribusClient:
             return response.get("result", {})
 
     def save_document(self) -> None:
-        """Save the current document to the workspace."""
-        self.send_command("save_document", {"file_path": str(DOCUMENT_PATH)})
+        """Save the current document to the workspace or its original path."""
+        save_path = str(self._document_path or DOCUMENT_PATH)
+        self.send_command("save_document", {"file_path": save_path})
 
     def shutdown(self) -> None:
         """Gracefully shut down the Scribus subprocess."""

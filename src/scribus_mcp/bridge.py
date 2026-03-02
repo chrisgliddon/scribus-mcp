@@ -660,6 +660,93 @@ def cmd_list_master_pages(params):
     return {"master_pages": list(names)}
 
 
+def cmd_open_document(params):
+    """Open an existing .sla document and return its structure."""
+    file_path = params["file_path"]
+    if scribus.haveDoc():
+        scribus.closeDoc()
+    scribus.openDoc(file_path)
+
+    # Reuse the page/object enumeration logic from cmd_get_document_info
+    page_count = scribus.pageCount()
+    pages = []
+    for i in range(1, page_count + 1):
+        scribus.gotoPage(i)
+        size = scribus.getPageSize()
+        pages.append({"number": i, "width": size[0], "height": size[1]})
+
+    objects = []
+    for item_info in scribus.getPageItems():
+        name, obj_type, page_num = item_info
+        objects.append({"name": name, "type": obj_type, "page": page_num})
+
+    return {
+        "file_path": file_path,
+        "page_count": page_count,
+        "pages": pages,
+        "objects": objects,
+    }
+
+
+def cmd_get_object_properties(params):
+    """Return detailed properties of a named object."""
+    name = params["name"]
+
+    # Find the object type via getPageItems
+    obj_type = None
+    for item_info in scribus.getPageItems():
+        if item_info[0] == name:
+            obj_type = item_info[1]
+            break
+    if obj_type is None:
+        raise ValueError(f"Object not found: {name}")
+
+    # Common properties
+    pos = scribus.getPosition(name)
+    size = scribus.getSize(name)
+    rotation = scribus.getRotation(name)
+
+    type_names = {2: "image", 4: "text", 5: "line", 6: "shape"}
+    type_name = type_names.get(obj_type, f"unknown({obj_type})")
+
+    props = {
+        "name": name,
+        "type": type_name,
+        "x": pos[0],
+        "y": pos[1],
+        "w": size[0],
+        "h": size[1],
+        "rotation": rotation,
+    }
+
+    if obj_type == 4:  # text
+        props["text"] = scribus.getAllText(name)
+        props["font"] = scribus.getFont(name)
+        props["font_size"] = scribus.getFontSize(name)
+        props["text_color"] = scribus.getTextColor(name)
+        props["fill_color"] = scribus.getFillColor(name)
+        props["line_color"] = scribus.getLineColor(name)
+        props["line_width"] = scribus.getLineWidth(name)
+        props["columns"] = scribus.getColumns(name)
+        props["column_gap"] = scribus.getColumnGap(name)
+    elif obj_type in (2, 6):  # image or shape
+        props["fill_color"] = scribus.getFillColor(name)
+        props["line_color"] = scribus.getLineColor(name)
+        props["line_width"] = scribus.getLineWidth(name)
+    elif obj_type == 5:  # line
+        props["line_color"] = scribus.getLineColor(name)
+        props["line_width"] = scribus.getLineWidth(name)
+
+    return props
+
+
+def cmd_delete_object(params):
+    """Delete a named object from the document."""
+    name = params["name"]
+    scribus.deleteObject(name)
+    return {"name": name, "deleted": True}
+
+
 def cmd_save_document(params):
     """Save document to a path, or current path if none given."""
     file_path = params.get("file_path")
@@ -687,11 +774,14 @@ def cmd_shutdown(params):
 
 COMMANDS = {
     "create_document": cmd_create_document,
+    "open_document": cmd_open_document,
     "define_color": cmd_define_color,
     "place_text": cmd_place_text,
     "place_image": cmd_place_image,
     "draw_shape": cmd_draw_shape,
     "modify_object": cmd_modify_object,
+    "get_object_properties": cmd_get_object_properties,
+    "delete_object": cmd_delete_object,
     "add_page": cmd_add_page,
     "export_pdf": cmd_export_pdf,
     "get_document_info": cmd_get_document_info,
