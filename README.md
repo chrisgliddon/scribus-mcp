@@ -8,7 +8,7 @@ MCP server for [Scribus](https://www.scribus.net/) — lets LLMs create professi
 Claude Code/Desktop ←(MCP stdio)→ server.py ←(subprocess NDJSON)→ Scribus -g -py bridge.py
 ```
 
-Scribus runs headless as a persistent subprocess. The bridge script executes inside Scribus's embedded Python, receives JSON commands over stdin, returns results over stdout. Document state auto-saves to `~/.scribus-mcp/workspace/document.sla` after each mutation.
+Scribus runs headless as a persistent subprocess. The bridge script executes inside Scribus's embedded Python, receives JSON commands over stdin, returns results over stdout. New documents auto-save to `~/.scribus-mcp/workspace/document.sla`; opened documents auto-save back to their original path.
 
 ## Prerequisites
 
@@ -134,6 +134,7 @@ Add a `"scribus"` entry to the `mcpServers` object in your config file:
 | Tool | What it does |
 |------|-------------|
 | `create_document` | New document with asymmetric margins, facing pages, and bleeds. Params: `width`, `height`, `margins`, `margin_top/bottom/left/right`, `facing_pages`, `first_page_left`, `bleed_top/bottom/left/right`, `unit` (mm/pt/in), `pages`, `orientation` |
+| `open_document` | Open an existing `.sla` file. Returns page count, page sizes, and object list. Auto-save writes back to the opened file. Params: `file_path` |
 | `add_page` | Add pages. Params: `count`, `where` (-1=append), `master_page` |
 | `get_document_info` | Query doc state — pages, margins, objects, colors, master pages, paragraph styles, character styles |
 | `set_baseline_grid` | Set document baseline grid for cross-column text alignment. Params: `grid` (spacing in pt), `offset` |
@@ -161,6 +162,8 @@ Add a `"scribus"` entry to the `mcpServers` object in your config file:
 | `place_image` | Image frame. Params: `x`, `y`, `w`, `h`, `file_path`, `scale_to_frame`, `proportional`, `page` |
 | `draw_shape` | Rectangle, ellipse, or line. Params: `shape`, `x/y/w/h` or `x1/y1/x2/y2`, `fill_color`, `line_color`, `line_width` |
 | `modify_object` | Change object props. Params: `name`, + any of: position, size, rotation, colors, text props, `line_spacing`, `line_spacing_mode`, `columns`, `column_gap` |
+| `get_object_properties` | Inspect an object's properties (position, size, rotation, type-specific: text content, font, colors, columns). Params: `name` |
+| `delete_object` | Remove an object from the document. Params: `name` |
 
 ### Layout & Master Pages
 
@@ -190,6 +193,8 @@ Add a `"scribus"` entry to the `mcpServers` object in your config file:
 > Create an A4 document, define a CMYK color called "BrandBlue" at C=100 M=80 Y=0 K=20, add a heading "Hello World" in 36pt centered at the top, draw a blue rectangle behind it, then export as PDF to ~/Desktop/test.pdf
 
 > Open a US Letter landscape document, place the image at ~/logo.png in the top-left corner scaled to 50x50mm, add body text below it, export to PDF
+
+> Open the file ~/Documents/layout.sla, show me what objects are on page 1, delete the old "header_text" frame, and replace it with a new heading "Updated Title" in 24pt centered at the top
 
 > Create a 245x290mm facing-pages book with 3mm bleeds, asymmetric margins (top=17, bottom=20, left=20, right=15), set a 13pt baseline grid, define a "Body" paragraph style in DejaVu Serif 9.5pt with justified alignment, then export as PDF/X-4 with crop marks and ISOcoated_v2 ICC profile
 
@@ -234,7 +239,7 @@ $env:SCRIBUS_EXECUTABLE = "C:\path\to\Scribus.exe"
 2. `bridge.py` redirects stdout to avoid protocol contamination, sends `{"ready": true}` sentinel
 3. Client sends NDJSON commands over stdin, reads JSON responses from stdout
 4. If Scribus crashes, next tool call auto-restarts the subprocess
-5. All mutations auto-save to `~/.scribus-mcp/workspace/document.sla`
+5. New documents auto-save to `~/.scribus-mcp/workspace/document.sla`; opened documents save back to their original path
 
 ## License
 
