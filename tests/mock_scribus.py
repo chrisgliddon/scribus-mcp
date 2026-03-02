@@ -290,3 +290,152 @@ def saveDocAs(path):
 def closeDoc():
     global _doc
     _doc = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: Bleeds + baseline grid
+# ---------------------------------------------------------------------------
+
+
+def setBleeds(bl, br, bt, bb):
+    if _doc:
+        _doc.bleeds = (bl, br, bt, bb)
+
+
+def setBaseLine(grid, offset):
+    if _doc:
+        _doc.baseline_grid = grid
+        _doc.baseline_offset = offset
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Typography
+# ---------------------------------------------------------------------------
+
+
+def setLineSpacingMode(mode, name):
+    if _doc and name in _doc.objects:
+        _doc.objects[name]["line_spacing_mode"] = mode
+
+
+def setLineSpacing(spacing, name):
+    if _doc and name in _doc.objects:
+        _doc.objects[name]["line_spacing"] = spacing
+
+
+def setColumns(cols, name):
+    if _doc and name in _doc.objects:
+        _doc.objects[name]["columns"] = cols
+
+
+def setColumnGap(gap, name):
+    if _doc and name in _doc.objects:
+        _doc.objects[name]["column_gap"] = gap
+
+
+def createParagraphStyle(**kwargs):
+    if _doc:
+        name = kwargs.get("name", "unnamed")
+        if not hasattr(_doc, "paragraph_styles"):
+            _doc.paragraph_styles = []
+        _doc.paragraph_styles.append(kwargs)
+
+
+def createCharStyle(**kwargs):
+    if _doc:
+        name = kwargs.get("name", "unnamed")
+        if not hasattr(_doc, "char_styles"):
+            _doc.char_styles = []
+        _doc.char_styles.append(kwargs)
+
+
+def setStyle(style, name):
+    if _doc and name in _doc.objects:
+        _doc.objects[name]["style"] = style
+
+
+def getParagraphStyles():
+    if _doc and hasattr(_doc, "paragraph_styles"):
+        return tuple(s.get("name", "") for s in _doc.paragraph_styles)
+    return ()
+
+
+def getCharStyles():
+    if _doc and hasattr(_doc, "char_styles"):
+        return tuple(s.get("name", "") for s in _doc.char_styles)
+    return ()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: (PDFfile already exists, enhanced in-place)
+# ---------------------------------------------------------------------------
+
+
+def getPageMargins():
+    if _doc:
+        return _doc.margins
+    return (0, 0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Layout & Structure
+# ---------------------------------------------------------------------------
+
+
+def linkTextFrames(from_name, to_name):
+    if _doc:
+        if not hasattr(_doc, "linked_frames"):
+            _doc.linked_frames = []
+        _doc.linked_frames.append((from_name, to_name))
+
+
+def unlinkTextFrames(name):
+    if _doc:
+        if hasattr(_doc, "linked_frames"):
+            _doc.linked_frames = [
+                pair for pair in _doc.linked_frames if pair[0] != name
+            ]
+
+
+def setHGuides(guides):
+    if _doc:
+        if not hasattr(_doc, "h_guides"):
+            _doc.h_guides = {}
+        _doc.h_guides[_doc.current_page] = list(guides)
+
+
+def setVGuides(guides):
+    if _doc:
+        if not hasattr(_doc, "v_guides"):
+            _doc.v_guides = {}
+        _doc.v_guides[_doc.current_page] = list(guides)
+
+
+def createMasterPage(name):
+    if _doc:
+        if not hasattr(_doc, "master_pages"):
+            _doc.master_pages = []
+        _doc.master_pages.append(name)
+
+
+def editMasterPage(name):
+    if _doc:
+        _doc.editing_master = name
+
+
+def closeMasterPage():
+    if _doc:
+        _doc.editing_master = None
+
+
+def applyMasterPage(name, page):
+    if _doc:
+        if not hasattr(_doc, "applied_masters"):
+            _doc.applied_masters = {}
+        _doc.applied_masters[page] = name
+
+
+def masterPageNames():
+    if _doc and hasattr(_doc, "master_pages"):
+        return tuple(_doc.master_pages)
+    return ()

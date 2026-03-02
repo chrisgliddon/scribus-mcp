@@ -96,9 +96,9 @@ def cmd_create_document(params):
     width = params.get("width", 210)
     height = params.get("height", 297)
     unit = _unit_constant(params.get("unit", "mm"))
-    margins_val = params.get("margins", 20)
 
-    # margins can be a single number or a dict with top/right/bottom/left
+    # Asymmetric margins: individual values override uniform 'margins'
+    margins_val = params.get("margins", 20)
     if isinstance(margins_val, dict):
         mt = margins_val.get("top", 20)
         mr = margins_val.get("right", 20)
@@ -107,8 +107,19 @@ def cmd_create_document(params):
     else:
         mt = mr = mb = ml = margins_val
 
+    mt = params.get("margin_top", mt)
+    mb = params.get("margin_bottom", mb)
+    ml = params.get("margin_left", ml)
+    mr = params.get("margin_right", mr)
+
     pages = params.get("pages", 1)
     orientation = params.get("orientation", 0)  # 0=portrait, 1=landscape
+
+    facing_pages = params.get("facing_pages", False)
+    pages_type = 1 if facing_pages else 0
+
+    first_page_left = params.get("first_page_left", False)
+    first_page_order = 0 if first_page_left else 1 if facing_pages else 0
 
     scribus.newDocument(
         (width, height),
@@ -116,10 +127,19 @@ def cmd_create_document(params):
         orientation,
         1,  # firstPageNumber
         unit,
-        0,  # pagesType: single page
-        0,  # firstPageOrder
+        pages_type,
+        first_page_order,
         pages,
     )
+
+    # Bleeds
+    bt = params.get("bleed_top", 0)
+    bb = params.get("bleed_bottom", 0)
+    bl = params.get("bleed_left", 0)
+    br = params.get("bleed_right", 0)
+    if bt or bb or bl or br:
+        scribus.setBleeds(bl, br, bt, bb)
+
     return {
         "width": width,
         "height": height,
@@ -180,6 +200,29 @@ def cmd_place_text(params):
     alignment = params.get("alignment")
     if alignment:
         scribus.setTextAlignment(_alignment_constant(alignment), frame_name)
+
+    # Line spacing
+    ls_mode = params.get("line_spacing_mode")
+    if ls_mode is not None:
+        scribus.setLineSpacingMode(ls_mode, frame_name)
+
+    ls = params.get("line_spacing")
+    if ls is not None:
+        scribus.setLineSpacing(ls, frame_name)
+
+    # Text columns
+    cols = params.get("columns")
+    if cols is not None:
+        scribus.setColumns(cols, frame_name)
+
+    col_gap = params.get("column_gap")
+    if col_gap is not None:
+        scribus.setColumnGap(col_gap, frame_name)
+
+    # Paragraph style
+    style = params.get("style")
+    if style:
+        scribus.setStyle(style, frame_name)
 
     return {"name": frame_name}
 
@@ -313,6 +356,28 @@ def cmd_modify_object(params):
         scribus.setTextAlignment(_alignment_constant(alignment), name)
         modified.append("alignment")
 
+    # Line spacing
+    ls_mode = params.get("line_spacing_mode")
+    if ls_mode is not None:
+        scribus.setLineSpacingMode(ls_mode, name)
+        modified.append("line_spacing_mode")
+
+    ls = params.get("line_spacing")
+    if ls is not None:
+        scribus.setLineSpacing(ls, name)
+        modified.append("line_spacing")
+
+    # Text columns
+    cols = params.get("columns")
+    if cols is not None:
+        scribus.setColumns(cols, name)
+        modified.append("columns")
+
+    col_gap = params.get("column_gap")
+    if col_gap is not None:
+        scribus.setColumnGap(col_gap, name)
+        modified.append("column_gap")
+
     return {"name": name, "modified": modified}
 
 
@@ -329,7 +394,7 @@ def cmd_add_page(params):
 
 
 def cmd_export_pdf(params):
-    """Export document as PDF with configurable quality and version."""
+    """Export document as PDF with configurable quality, version, and prepress options."""
     file_path = params["file_path"]
 
     pdf = scribus.PDFfile()
@@ -346,6 +411,11 @@ def cmd_export_pdf(params):
         pdf.quality = 0  # max quality
         pdf.resolution = 300
 
+    # Custom resolution overrides quality preset
+    resolution = params.get("resolution")
+    if resolution is not None:
+        pdf.resolution = resolution
+
     pdf_version = params.get("pdf_version")
     if pdf_version:
         version_map = {
@@ -354,6 +424,7 @@ def cmd_export_pdf(params):
             "1.5": 15,
             "x-1a": 11,
             "x-3": 12,
+            "x-4": 10,
         }
         ver = version_map.get(str(pdf_version))
         if ver:
@@ -362,6 +433,49 @@ def cmd_export_pdf(params):
     pages_param = params.get("pages")
     if pages_param and isinstance(pages_param, list):
         pdf.pages = pages_param
+
+    # Printer marks
+    if params.get("crop_marks"):
+        pdf.cropMarks = True
+    if params.get("bleed_marks"):
+        pdf.bleedMarks = True
+    if params.get("registration_marks"):
+        pdf.registrationMarks = True
+    if params.get("color_marks"):
+        pdf.colorMarks = True
+
+    mark_length = params.get("mark_length")
+    if mark_length is not None:
+        pdf.markLength = mark_length
+
+    mark_offset = params.get("mark_offset")
+    if mark_offset is not None:
+        pdf.markOffset = mark_offset
+
+    # Bleeds
+    if params.get("use_doc_bleeds", True):
+        pdf.useDocBleeds = True
+
+    # Color management
+    output_profile = params.get("output_profile")
+    if output_profile:
+        pdf.outputProfile = output_profile
+
+    if params.get("embed_profiles"):
+        pdf.embedProfiles = True
+
+    info = params.get("info")
+    if info:
+        pdf.info = info
+
+    # Font embedding
+    font_embedding = params.get("font_embedding", "embed")
+    if font_embedding == "outline":
+        pdf.fontEmbedding = 1
+    elif font_embedding == "none":
+        pdf.fontEmbedding = 2
+    else:
+        pdf.fontEmbedding = 0
 
     pdf.save()
     return {"file_path": file_path}
@@ -388,12 +502,25 @@ def cmd_get_document_info(params):
         )
 
     colors = scribus.getColorNames()
+    margins = scribus.getPageMargins()
+    master_pages = list(scribus.masterPageNames())
+    paragraph_styles = list(scribus.getParagraphStyles())
+    char_styles = list(scribus.getCharStyles())
 
     return {
         "page_count": page_count,
         "pages": pages,
         "objects": items,
         "colors": list(colors),
+        "margins": {
+            "left": margins[0],
+            "right": margins[1],
+            "top": margins[2],
+            "bottom": margins[3],
+        },
+        "master_pages": master_pages,
+        "paragraph_styles": paragraph_styles,
+        "char_styles": char_styles,
     }
 
 
@@ -410,6 +537,127 @@ def cmd_run_script(params):
         except (TypeError, ValueError):
             result = str(result)
     return {"result": result}
+
+
+def cmd_set_baseline_grid(params):
+    """Set the document baseline grid spacing and offset."""
+    grid = params["grid"]
+    offset = params.get("offset", 0)
+    scribus.setBaseLine(grid, offset)
+    return {"grid": grid, "offset": offset}
+
+
+def cmd_create_paragraph_style(params):
+    """Create a named paragraph style."""
+    kwargs = {"name": params["name"]}
+    if "font" in params:
+        kwargs["font"] = params["font"]
+    if "font_size" in params:
+        kwargs["fontsize"] = params["font_size"]
+    if "line_spacing" in params:
+        kwargs["linespacing"] = params["line_spacing"]
+    if "line_spacing_mode" in params:
+        kwargs["linespacingmode"] = params["line_spacing_mode"]
+    if "alignment" in params:
+        kwargs["alignment"] = _alignment_constant(params["alignment"])
+    if "first_indent" in params:
+        kwargs["firstindent"] = params["first_indent"]
+    if "space_above" in params:
+        kwargs["spaceabove"] = params["space_above"]
+    if "space_below" in params:
+        kwargs["spacebelow"] = params["space_below"]
+    if "drop_cap" in params:
+        kwargs["hasdropcap"] = params["drop_cap"]
+    if "drop_cap_lines" in params:
+        kwargs["dropcaplines"] = params["drop_cap_lines"]
+    if "char_style" in params:
+        kwargs["charstyle"] = params["char_style"]
+
+    scribus.createParagraphStyle(**kwargs)
+    return {"name": params["name"]}
+
+
+def cmd_create_char_style(params):
+    """Create a named character style."""
+    kwargs = {"name": params["name"]}
+    if "font" in params:
+        kwargs["font"] = params["font"]
+    if "font_size" in params:
+        kwargs["fontsize"] = params["font_size"]
+    if "fill_color" in params:
+        kwargs["fillcolor"] = params["fill_color"]
+    if "features" in params:
+        kwargs["features"] = params["features"]
+    if "tracking" in params:
+        kwargs["tracking"] = params["tracking"]
+
+    scribus.createCharStyle(**kwargs)
+    return {"name": params["name"]}
+
+
+def cmd_link_text_frames(params):
+    """Link two text frames for text flow."""
+    from_frame = params["from_frame"]
+    to_frame = params["to_frame"]
+    scribus.linkTextFrames(from_frame, to_frame)
+    return {"from_frame": from_frame, "to_frame": to_frame}
+
+
+def cmd_unlink_text_frames(params):
+    """Unlink a text frame from its chain."""
+    frame = params["frame"]
+    scribus.unlinkTextFrames(frame)
+    return {"frame": frame}
+
+
+def cmd_set_guides(params):
+    """Set horizontal and/or vertical guides on a page."""
+    page = params.get("page")
+    _go_to_page(page)
+
+    horizontal = params.get("horizontal")
+    if horizontal is not None:
+        scribus.setHGuides(horizontal)
+
+    vertical = params.get("vertical")
+    if vertical is not None:
+        scribus.setVGuides(vertical)
+
+    return {"horizontal": horizontal, "vertical": vertical}
+
+
+def cmd_create_master_page(params):
+    """Create a new master page."""
+    name = params["name"]
+    scribus.createMasterPage(name)
+    return {"name": name}
+
+
+def cmd_edit_master_page(params):
+    """Enter editing mode for a master page."""
+    name = params["name"]
+    scribus.editMasterPage(name)
+    return {"name": name}
+
+
+def cmd_close_master_page(params):
+    """Exit master page editing mode."""
+    scribus.closeMasterPage()
+    return {}
+
+
+def cmd_apply_master_page(params):
+    """Apply a master page to a document page."""
+    master_page = params["master_page"]
+    page = params["page"]
+    scribus.applyMasterPage(master_page, page)
+    return {"master_page": master_page, "page": page}
+
+
+def cmd_list_master_pages(params):
+    """List all master page names."""
+    names = scribus.masterPageNames()
+    return {"master_pages": list(names)}
 
 
 def cmd_save_document(params):
@@ -450,6 +698,17 @@ COMMANDS = {
     "run_script": cmd_run_script,
     "save_document": cmd_save_document,
     "shutdown": cmd_shutdown,
+    "set_baseline_grid": cmd_set_baseline_grid,
+    "create_paragraph_style": cmd_create_paragraph_style,
+    "create_char_style": cmd_create_char_style,
+    "link_text_frames": cmd_link_text_frames,
+    "unlink_text_frames": cmd_unlink_text_frames,
+    "set_guides": cmd_set_guides,
+    "create_master_page": cmd_create_master_page,
+    "edit_master_page": cmd_edit_master_page,
+    "close_master_page": cmd_close_master_page,
+    "apply_master_page": cmd_apply_master_page,
+    "list_master_pages": cmd_list_master_pages,
 }
 
 

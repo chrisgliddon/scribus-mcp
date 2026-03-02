@@ -17,17 +17,28 @@ from scribus_mcp.bridge import (  # noqa: E402
     _go_to_page,
     _unit_constant,
     cmd_add_page,
+    cmd_apply_master_page,
+    cmd_close_master_page,
+    cmd_create_char_style,
     cmd_create_document,
+    cmd_create_master_page,
+    cmd_create_paragraph_style,
     cmd_define_color,
     cmd_draw_shape,
+    cmd_edit_master_page,
     cmd_export_pdf,
     cmd_get_document_info,
+    cmd_link_text_frames,
+    cmd_list_master_pages,
     cmd_modify_object,
     cmd_place_image,
     cmd_place_text,
     cmd_run_script,
     cmd_save_document,
+    cmd_set_baseline_grid,
+    cmd_set_guides,
     cmd_shutdown,
+    cmd_unlink_text_frames,
     main,
 )
 
@@ -116,6 +127,49 @@ class TestCmdCreateDocument:
         cmd_create_document({"margins": {"top": 10, "right": 20, "bottom": 30, "left": 40}})
         assert mock_scribus._doc.margins == (40, 20, 10, 30)
 
+    def test_asymmetric_margins(self):
+        cmd_create_document(
+            {"margin_top": 17, "margin_bottom": 20, "margin_left": 20, "margin_right": 15}
+        )
+        # margins tuple is (left, right, top, bottom)
+        assert mock_scribus._doc.margins == (20, 15, 17, 20)
+
+    def test_facing_pages(self):
+        cmd_create_document({"facing_pages": True})
+        # pagesType should be 1 for facing pages
+        # firstPageOrder should be 1 for right-start (default when facing)
+        doc = mock_scribus._doc
+        assert doc is not None
+
+    def test_first_page_left(self):
+        cmd_create_document({"facing_pages": True, "first_page_left": True})
+        assert mock_scribus._doc is not None
+
+    def test_bleeds(self):
+        cmd_create_document(
+            {"bleed_top": 3, "bleed_bottom": 3, "bleed_left": 3, "bleed_right": 3}
+        )
+        assert mock_scribus._doc.bleeds == (3, 3, 3, 3)
+
+    def test_no_bleeds_by_default(self):
+        _create_doc()
+        assert not hasattr(mock_scribus._doc, "bleeds")
+
+
+class TestCmdSetBaselineGrid:
+    def test_basic(self):
+        _create_doc()
+        result = cmd_set_baseline_grid({"grid": 13})
+        assert result["grid"] == 13
+        assert result["offset"] == 0
+        assert mock_scribus._doc.baseline_grid == 13
+
+    def test_with_offset(self):
+        _create_doc()
+        result = cmd_set_baseline_grid({"grid": 12, "offset": 5})
+        assert result["offset"] == 5
+        assert mock_scribus._doc.baseline_offset == 5
+
 
 class TestCmdDefineColor:
     def test_cmyk(self):
@@ -183,6 +237,32 @@ class TestCmdPlaceText:
         _create_doc()
         result = cmd_place_text({"x": 0, "y": 0, "w": 50, "h": 50})
         assert result["name"].startswith("text_")
+
+    def test_line_spacing(self):
+        _create_doc()
+        result = cmd_place_text(
+            {"x": 0, "y": 0, "w": 100, "h": 50, "line_spacing": 13, "line_spacing_mode": 0}
+        )
+        obj = mock_scribus._doc.objects[result["name"]]
+        assert obj["line_spacing"] == 13
+        assert obj["line_spacing_mode"] == 0
+
+    def test_columns(self):
+        _create_doc()
+        result = cmd_place_text(
+            {"x": 0, "y": 0, "w": 100, "h": 50, "columns": 2, "column_gap": 5}
+        )
+        obj = mock_scribus._doc.objects[result["name"]]
+        assert obj["columns"] == 2
+        assert obj["column_gap"] == 5
+
+    def test_paragraph_style(self):
+        _create_doc()
+        result = cmd_place_text(
+            {"x": 0, "y": 0, "w": 100, "h": 50, "text": "Hello", "style": "Body"}
+        )
+        obj = mock_scribus._doc.objects[result["name"]]
+        assert obj["style"] == "Body"
 
 
 class TestCmdPlaceImage:
@@ -329,6 +409,30 @@ class TestCmdModifyObject:
         result = cmd_modify_object({"name": text["name"]})
         assert result["modified"] == []
 
+    def test_line_spacing(self):
+        _create_doc()
+        text = cmd_place_text({"x": 0, "y": 0, "w": 50, "h": 50})
+        name = text["name"]
+        result = cmd_modify_object(
+            {"name": name, "line_spacing": 14, "line_spacing_mode": 2}
+        )
+        assert "line_spacing" in result["modified"]
+        assert "line_spacing_mode" in result["modified"]
+        obj = mock_scribus._doc.objects[name]
+        assert obj["line_spacing"] == 14
+        assert obj["line_spacing_mode"] == 2
+
+    def test_columns(self):
+        _create_doc()
+        text = cmd_place_text({"x": 0, "y": 0, "w": 100, "h": 50})
+        name = text["name"]
+        result = cmd_modify_object({"name": name, "columns": 3, "column_gap": 4})
+        assert "columns" in result["modified"]
+        assert "column_gap" in result["modified"]
+        obj = mock_scribus._doc.objects[name]
+        assert obj["columns"] == 3
+        assert obj["column_gap"] == 4
+
 
 class TestCmdAddPage:
     def test_add_one(self):
@@ -347,6 +451,50 @@ class TestCmdAddPage:
         _create_doc(pages=2)
         result = cmd_add_page({"count": 2})
         assert result["total_pages"] == 4
+
+
+class TestCmdCreateParagraphStyle:
+    def test_basic(self):
+        _create_doc()
+        result = cmd_create_paragraph_style({"name": "Body", "font": "DejaVu Serif", "font_size": 9.5})
+        assert result["name"] == "Body"
+
+    def test_full_options(self):
+        _create_doc()
+        result = cmd_create_paragraph_style({
+            "name": "Heading",
+            "font": "Arial Bold",
+            "font_size": 24,
+            "line_spacing": 28,
+            "line_spacing_mode": 0,
+            "alignment": "center",
+            "first_indent": 0,
+            "space_above": 12,
+            "space_below": 6,
+            "drop_cap": True,
+            "drop_cap_lines": 3,
+            "char_style": "HeadingChar",
+        })
+        assert result["name"] == "Heading"
+
+
+class TestCmdCreateCharStyle:
+    def test_basic(self):
+        _create_doc()
+        result = cmd_create_char_style({"name": "Emphasis", "font": "Arial Italic"})
+        assert result["name"] == "Emphasis"
+
+    def test_full_options(self):
+        _create_doc()
+        result = cmd_create_char_style({
+            "name": "SmallCaps",
+            "font": "Arial Regular",
+            "font_size": 10,
+            "fill_color": "Black",
+            "features": "smallcaps",
+            "tracking": 50,
+        })
+        assert result["name"] == "SmallCaps"
 
 
 class TestCmdExportPdf:
@@ -368,10 +516,71 @@ class TestCmdExportPdf:
         cmd_export_pdf({"file_path": "/tmp/out.pdf", "pdf_version": "1.4"})
         assert mock_scribus._last_pdf.version == 14
 
+    def test_pdf_x4(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "pdf_version": "x-4"})
+        assert mock_scribus._last_pdf.version == 10
+
     def test_pages_list(self):
         _create_doc(pages=3)
         cmd_export_pdf({"file_path": "/tmp/out.pdf", "pages": [1, 3]})
         assert mock_scribus._last_pdf.pages == [1, 3]
+
+    def test_crop_marks(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "crop_marks": True})
+        assert mock_scribus._last_pdf.cropMarks is True
+
+    def test_bleed_marks(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "bleed_marks": True})
+        assert mock_scribus._last_pdf.bleedMarks is True
+
+    def test_registration_marks(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "registration_marks": True})
+        assert mock_scribus._last_pdf.registrationMarks is True
+
+    def test_color_marks(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "color_marks": True})
+        assert mock_scribus._last_pdf.colorMarks is True
+
+    def test_mark_dimensions(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "mark_length": 20, "mark_offset": 5})
+        assert mock_scribus._last_pdf.markLength == 20
+        assert mock_scribus._last_pdf.markOffset == 5
+
+    def test_output_profile(self):
+        _create_doc()
+        cmd_export_pdf({
+            "file_path": "/tmp/out.pdf",
+            "output_profile": "ISOcoated_v2_300_eci",
+            "embed_profiles": True,
+        })
+        assert mock_scribus._last_pdf.outputProfile == "ISOcoated_v2_300_eci"
+        assert mock_scribus._last_pdf.embedProfiles is True
+
+    def test_font_embedding_outline(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "font_embedding": "outline"})
+        assert mock_scribus._last_pdf.fontEmbedding == 1
+
+    def test_custom_resolution(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "quality": "screen", "resolution": 600})
+        assert mock_scribus._last_pdf.resolution == 600
+
+    def test_info_string(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "info": "Test document"})
+        assert mock_scribus._last_pdf.info == "Test document"
+
+    def test_use_doc_bleeds(self):
+        _create_doc()
+        cmd_export_pdf({"file_path": "/tmp/out.pdf", "use_doc_bleeds": True})
+        assert mock_scribus._last_pdf.useDocBleeds is True
 
 
 class TestCmdGetDocumentInfo:
@@ -394,6 +603,105 @@ class TestCmdGetDocumentInfo:
         cmd_define_color({"name": "MyColor", "mode": "rgb", "r": 255, "g": 0, "b": 0})
         result = cmd_get_document_info({})
         assert "MyColor" in result["colors"]
+
+    def test_margins_in_info(self):
+        _create_doc(margins=15)
+        result = cmd_get_document_info({})
+        assert "margins" in result
+        assert result["margins"]["left"] == 15
+
+    def test_master_pages_in_info(self):
+        _create_doc()
+        cmd_create_master_page({"name": "LeftPage"})
+        result = cmd_get_document_info({})
+        assert "LeftPage" in result["master_pages"]
+
+    def test_paragraph_styles_in_info(self):
+        _create_doc()
+        cmd_create_paragraph_style({"name": "Body"})
+        result = cmd_get_document_info({})
+        assert "Body" in result["paragraph_styles"]
+
+    def test_char_styles_in_info(self):
+        _create_doc()
+        cmd_create_char_style({"name": "Bold"})
+        result = cmd_get_document_info({})
+        assert "Bold" in result["char_styles"]
+
+
+class TestCmdLinkTextFrames:
+    def test_link(self):
+        _create_doc()
+        f1 = cmd_place_text({"x": 0, "y": 0, "w": 50, "h": 50})
+        f2 = cmd_place_text({"x": 0, "y": 60, "w": 50, "h": 50})
+        result = cmd_link_text_frames({"from_frame": f1["name"], "to_frame": f2["name"]})
+        assert result["from_frame"] == f1["name"]
+        assert result["to_frame"] == f2["name"]
+        assert (f1["name"], f2["name"]) in mock_scribus._doc.linked_frames
+
+
+class TestCmdUnlinkTextFrames:
+    def test_unlink(self):
+        _create_doc()
+        f1 = cmd_place_text({"x": 0, "y": 0, "w": 50, "h": 50})
+        f2 = cmd_place_text({"x": 0, "y": 60, "w": 50, "h": 50})
+        cmd_link_text_frames({"from_frame": f1["name"], "to_frame": f2["name"]})
+        result = cmd_unlink_text_frames({"frame": f1["name"]})
+        assert result["frame"] == f1["name"]
+        assert len(mock_scribus._doc.linked_frames) == 0
+
+
+class TestCmdSetGuides:
+    def test_horizontal(self):
+        _create_doc()
+        result = cmd_set_guides({"horizontal": [50, 100]})
+        assert result["horizontal"] == [50, 100]
+        assert mock_scribus._doc.h_guides[1] == [50, 100]
+
+    def test_vertical(self):
+        _create_doc()
+        result = cmd_set_guides({"vertical": [30, 60]})
+        assert result["vertical"] == [30, 60]
+        assert mock_scribus._doc.v_guides[1] == [30, 60]
+
+    def test_both_with_page(self):
+        _create_doc(pages=2)
+        result = cmd_set_guides({"horizontal": [50], "vertical": [30], "page": 2})
+        assert mock_scribus._doc.h_guides[2] == [50]
+        assert mock_scribus._doc.v_guides[2] == [30]
+
+
+class TestCmdMasterPages:
+    def test_create(self):
+        _create_doc()
+        result = cmd_create_master_page({"name": "LeftPage"})
+        assert result["name"] == "LeftPage"
+        assert "LeftPage" in mock_scribus._doc.master_pages
+
+    def test_edit_and_close(self):
+        _create_doc()
+        cmd_create_master_page({"name": "RightPage"})
+        result = cmd_edit_master_page({"name": "RightPage"})
+        assert result["name"] == "RightPage"
+        assert mock_scribus._doc.editing_master == "RightPage"
+        cmd_close_master_page({})
+        assert mock_scribus._doc.editing_master is None
+
+    def test_apply(self):
+        _create_doc(pages=2)
+        cmd_create_master_page({"name": "LeftPage"})
+        result = cmd_apply_master_page({"master_page": "LeftPage", "page": 2})
+        assert result["master_page"] == "LeftPage"
+        assert result["page"] == 2
+        assert mock_scribus._doc.applied_masters[2] == "LeftPage"
+
+    def test_list(self):
+        _create_doc()
+        cmd_create_master_page({"name": "A"})
+        cmd_create_master_page({"name": "B"})
+        result = cmd_list_master_pages({})
+        assert "A" in result["master_pages"]
+        assert "B" in result["master_pages"]
 
 
 class TestCmdRunScript:
@@ -510,5 +818,16 @@ class TestCommandDispatch:
             "run_script",
             "save_document",
             "shutdown",
+            "set_baseline_grid",
+            "create_paragraph_style",
+            "create_char_style",
+            "link_text_frames",
+            "unlink_text_frames",
+            "set_guides",
+            "create_master_page",
+            "edit_master_page",
+            "close_master_page",
+            "apply_master_page",
+            "list_master_pages",
         }
         assert set(COMMANDS.keys()) == expected

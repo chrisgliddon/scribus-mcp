@@ -45,6 +45,16 @@ def create_document(
     width: float = 210,
     height: float = 297,
     margins: float = 20,
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+    facing_pages: bool = False,
+    first_page_left: bool = False,
+    bleed_top: float = 0,
+    bleed_bottom: float = 0,
+    bleed_left: float = 0,
+    bleed_right: float = 0,
     unit: str = "mm",
     pages: int = 1,
     orientation: int = 0,
@@ -54,24 +64,47 @@ def create_document(
     Args:
         width: Page width in the specified unit (default: 210 for A4)
         height: Page height in the specified unit (default: 297 for A4)
-        margins: Page margins, uniform on all sides (default: 20)
+        margins: Uniform page margins on all sides (default: 20)
+        margin_top: Top margin (overrides uniform margins)
+        margin_bottom: Bottom margin (overrides uniform margins)
+        margin_left: Left/inner margin (overrides uniform margins)
+        margin_right: Right/outer margin (overrides uniform margins)
+        facing_pages: Enable facing pages (spreads) for book layouts
+        first_page_left: Start book with a left page (default: right start)
+        bleed_top: Top bleed in document units (default: 0)
+        bleed_bottom: Bottom bleed in document units (default: 0)
+        bleed_left: Left bleed in document units (default: 0)
+        bleed_right: Right bleed in document units (default: 0)
         unit: Measurement unit - "mm", "pt", "in", or "p" (default: "mm")
         pages: Number of initial pages (default: 1)
         orientation: 0 for portrait, 1 for landscape (default: 0)
 
     """
     client = _get_client()
-    result = client.send_command(
-        "create_document",
-        {
-            "width": width,
-            "height": height,
-            "margins": margins,
-            "unit": unit,
-            "pages": pages,
-            "orientation": orientation,
-        },
-    )
+    params: dict[str, Any] = {
+        "width": width,
+        "height": height,
+        "margins": margins,
+        "unit": unit,
+        "pages": pages,
+        "orientation": orientation,
+        "facing_pages": facing_pages,
+        "first_page_left": first_page_left,
+        "bleed_top": bleed_top,
+        "bleed_bottom": bleed_bottom,
+        "bleed_left": bleed_left,
+        "bleed_right": bleed_right,
+    }
+    if margin_top is not None:
+        params["margin_top"] = margin_top
+    if margin_bottom is not None:
+        params["margin_bottom"] = margin_bottom
+    if margin_left is not None:
+        params["margin_left"] = margin_left
+    if margin_right is not None:
+        params["margin_right"] = margin_right
+
+    result = client.send_command("create_document", params)
     _save_after(result)
     w, h, u, p = result["width"], result["height"], result["unit"], result["pages"]
     return f"Created {w}x{h}{u} document with {p} page(s)."
@@ -131,6 +164,11 @@ def place_text(
     color: str | None = None,
     alignment: str | None = None,
     page: int | None = None,
+    line_spacing: float | None = None,
+    line_spacing_mode: int | None = None,
+    columns: int | None = None,
+    column_gap: float | None = None,
+    style: str | None = None,
 ) -> str:
     """Create a text frame and optionally fill it with styled text.
 
@@ -145,20 +183,29 @@ def place_text(
         color: Color name (must be defined in the document palette)
         alignment: Text alignment - "left", "center", "right", "justify"
         page: Page number (1-based) to place the text on
+        line_spacing: Line spacing (leading) in points
+        line_spacing_mode: 0=fixed, 1=automatic, 2=align to baseline grid
+        columns: Number of text columns
+        column_gap: Gap between columns in document units
+        style: Paragraph style name to apply
 
     """
     client = _get_client()
     params: dict[str, Any] = {"x": x, "y": y, "w": w, "h": h, "text": text}
-    if font is not None:
-        params["font"] = font
-    if font_size is not None:
-        params["font_size"] = font_size
-    if color is not None:
-        params["color"] = color
-    if alignment is not None:
-        params["alignment"] = alignment
-    if page is not None:
-        params["page"] = page
+    for key, val in [
+        ("font", font),
+        ("font_size", font_size),
+        ("color", color),
+        ("alignment", alignment),
+        ("page", page),
+        ("line_spacing", line_spacing),
+        ("line_spacing_mode", line_spacing_mode),
+        ("columns", columns),
+        ("column_gap", column_gap),
+        ("style", style),
+    ]:
+        if val is not None:
+            params[key] = val
 
     result = client.send_command("place_text", params)
     _save_after(result)
@@ -290,6 +337,10 @@ def modify_object(
     font_size: float | None = None,
     text_color: str | None = None,
     alignment: str | None = None,
+    line_spacing: float | None = None,
+    line_spacing_mode: int | None = None,
+    columns: int | None = None,
+    column_gap: float | None = None,
 ) -> str:
     """Modify properties of an existing object.
 
@@ -310,6 +361,10 @@ def modify_object(
         font_size: New font size in points (text frames only)
         text_color: New text color name (text frames only)
         alignment: New text alignment (text frames only)
+        line_spacing: Line spacing (leading) in points (text frames only)
+        line_spacing_mode: 0=fixed, 1=automatic, 2=align to baseline grid (text frames only)
+        columns: Number of text columns (text frames only)
+        column_gap: Gap between columns in document units (text frames only)
 
     """
     client = _get_client()
@@ -329,6 +384,10 @@ def modify_object(
         ("font_size", font_size),
         ("text_color", text_color),
         ("alignment", alignment),
+        ("line_spacing", line_spacing),
+        ("line_spacing_mode", line_spacing_mode),
+        ("columns", columns),
+        ("column_gap", column_gap),
     ]:
         if val is not None:
             params[key] = val
@@ -372,14 +431,38 @@ def export_pdf(
     quality: str = "press",
     pdf_version: str | None = None,
     pages: list[int] | None = None,
+    crop_marks: bool = False,
+    bleed_marks: bool = False,
+    registration_marks: bool = False,
+    color_marks: bool = False,
+    mark_length: float | None = None,
+    mark_offset: float | None = None,
+    use_doc_bleeds: bool = True,
+    output_profile: str | None = None,
+    embed_profiles: bool = False,
+    info: str | None = None,
+    font_embedding: str = "embed",
+    resolution: int | None = None,
 ) -> str:
     """Export the document as a PDF file.
 
     Args:
         file_path: Output PDF file path
         quality: Quality preset - "screen" (150dpi), "ebook" (150dpi), "press" (300dpi)
-        pdf_version: PDF version - "1.3", "1.4", "1.5", "x-1a", "x-3"
+        pdf_version: PDF version - "1.3", "1.4", "1.5", "x-1a", "x-3", "x-4"
         pages: List of page numbers to export (default: all pages)
+        crop_marks: Add crop/trim marks
+        bleed_marks: Add bleed marks
+        registration_marks: Add registration marks
+        color_marks: Add color calibration marks
+        mark_length: Length of printer marks in points
+        mark_offset: Offset of marks from page edge in points
+        use_doc_bleeds: Use document bleed settings (default: True)
+        output_profile: ICC output color profile name (e.g. "ISOcoated_v2_300_eci")
+        embed_profiles: Embed ICC color profiles in the PDF
+        info: PDF info string (required for PDF/X)
+        font_embedding: "embed", "outline", or "none" (default: "embed")
+        resolution: Custom DPI resolution (overrides quality preset)
 
     """
     client = _get_client()
@@ -389,13 +472,32 @@ def export_pdf(
     if pages is not None:
         params["pages"] = pages
 
+    # Prepress options
+    params["crop_marks"] = crop_marks
+    params["bleed_marks"] = bleed_marks
+    params["registration_marks"] = registration_marks
+    params["color_marks"] = color_marks
+    params["use_doc_bleeds"] = use_doc_bleeds
+    params["embed_profiles"] = embed_profiles
+    params["font_embedding"] = font_embedding
+
+    for key, val in [
+        ("mark_length", mark_length),
+        ("mark_offset", mark_offset),
+        ("output_profile", output_profile),
+        ("info", info),
+        ("resolution", resolution),
+    ]:
+        if val is not None:
+            params[key] = val
+
     result = client.send_command("export_pdf", params)
     return f"Exported PDF to {result['file_path']}."
 
 
 @mcp.tool()
 def get_document_info() -> str:
-    """Get information about the current document including pages, objects, and colors."""
+    """Get information about the current document including pages, objects, colors, margins, master pages, and styles."""
     client = _get_client()
     result = client.send_command("get_document_info", {})
 
@@ -406,6 +508,12 @@ def get_document_info() -> str:
         for p in result["pages"]:
             lines.append(f"  Page {p['number']}: {p['width']}x{p['height']}")
 
+    if result.get("margins"):
+        m = result["margins"]
+        lines.append(
+            f"Margins: top={m['top']}, bottom={m['bottom']}, left={m['left']}, right={m['right']}"
+        )
+
     if result.get("objects"):
         lines.append(f"Objects ({len(result['objects'])}):")
         for obj in result["objects"]:
@@ -414,7 +522,267 @@ def get_document_info() -> str:
     if result.get("colors"):
         lines.append(f"Colors: {', '.join(result['colors'])}")
 
+    if result.get("master_pages"):
+        lines.append(f"Master pages: {', '.join(result['master_pages'])}")
+
+    if result.get("paragraph_styles"):
+        lines.append(f"Paragraph styles: {', '.join(result['paragraph_styles'])}")
+
+    if result.get("char_styles"):
+        lines.append(f"Character styles: {', '.join(result['char_styles'])}")
+
     return "\n".join(lines)
+
+
+@mcp.tool()
+def set_baseline_grid(
+    grid: float,
+    offset: float = 0,
+) -> str:
+    """Set the document baseline grid for aligning text across columns.
+
+    Args:
+        grid: Grid spacing in points
+        offset: Grid offset from top of page in points (default: 0)
+
+    """
+    client = _get_client()
+    result = client.send_command("set_baseline_grid", {"grid": grid, "offset": offset})
+    _save_after(result)
+    return f"Set baseline grid: {result['grid']}pt spacing, {result['offset']}pt offset."
+
+
+@mcp.tool()
+def create_paragraph_style(
+    name: str,
+    font: str | None = None,
+    font_size: float | None = None,
+    line_spacing: float | None = None,
+    line_spacing_mode: int | None = None,
+    alignment: str | None = None,
+    first_indent: float | None = None,
+    space_above: float | None = None,
+    space_below: float | None = None,
+    drop_cap: bool | None = None,
+    drop_cap_lines: int | None = None,
+    char_style: str | None = None,
+) -> str:
+    """Create a named paragraph style for consistent text formatting.
+
+    Args:
+        name: Style name
+        font: Font name (e.g. "DejaVu Serif")
+        font_size: Font size in points
+        line_spacing: Line spacing (leading) in points
+        line_spacing_mode: 0=fixed, 1=automatic, 2=align to baseline grid
+        alignment: Text alignment - "left", "center", "right", "justify"
+        first_indent: First line indent in document units
+        space_above: Space above paragraph in points
+        space_below: Space below paragraph in points
+        drop_cap: Enable drop caps
+        drop_cap_lines: Number of lines for drop cap
+        char_style: Associated character style name
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"name": name}
+    for key, val in [
+        ("font", font),
+        ("font_size", font_size),
+        ("line_spacing", line_spacing),
+        ("line_spacing_mode", line_spacing_mode),
+        ("alignment", alignment),
+        ("first_indent", first_indent),
+        ("space_above", space_above),
+        ("space_below", space_below),
+        ("drop_cap", drop_cap),
+        ("drop_cap_lines", drop_cap_lines),
+        ("char_style", char_style),
+    ]:
+        if val is not None:
+            params[key] = val
+
+    result = client.send_command("create_paragraph_style", params)
+    _save_after(result)
+    return f"Created paragraph style '{result['name']}'."
+
+
+@mcp.tool()
+def create_char_style(
+    name: str,
+    font: str | None = None,
+    font_size: float | None = None,
+    fill_color: str | None = None,
+    features: str | None = None,
+    tracking: float | None = None,
+) -> str:
+    """Create a named character style.
+
+    Args:
+        name: Style name
+        font: Font name
+        font_size: Font size in points
+        fill_color: Text color name
+        features: Comma-separated features (e.g. "bold,italic,smallcaps")
+        tracking: Letter spacing adjustment
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {"name": name}
+    for key, val in [
+        ("font", font),
+        ("font_size", font_size),
+        ("fill_color", fill_color),
+        ("features", features),
+        ("tracking", tracking),
+    ]:
+        if val is not None:
+            params[key] = val
+
+    result = client.send_command("create_char_style", params)
+    _save_after(result)
+    return f"Created character style '{result['name']}'."
+
+
+@mcp.tool()
+def link_text_frames(
+    from_frame: str,
+    to_frame: str,
+) -> str:
+    """Link two text frames so text flows from one to the next.
+
+    Args:
+        from_frame: Source text frame name
+        to_frame: Destination text frame name
+
+    """
+    client = _get_client()
+    result = client.send_command(
+        "link_text_frames", {"from_frame": from_frame, "to_frame": to_frame}
+    )
+    _save_after(result)
+    return f"Linked '{from_frame}' → '{to_frame}'."
+
+
+@mcp.tool()
+def unlink_text_frames(
+    frame: str,
+) -> str:
+    """Unlink a text frame from its text flow chain.
+
+    Args:
+        frame: Text frame name to unlink
+
+    """
+    client = _get_client()
+    result = client.send_command("unlink_text_frames", {"frame": frame})
+    _save_after(result)
+    return f"Unlinked '{frame}'."
+
+
+@mcp.tool()
+def set_guides(
+    horizontal: list[float] | None = None,
+    vertical: list[float] | None = None,
+    page: int | None = None,
+) -> str:
+    """Set horizontal and/or vertical guides on a page.
+
+    Args:
+        horizontal: List of Y positions for horizontal guides
+        vertical: List of X positions for vertical guides
+        page: Page number (1-based); defaults to current page
+
+    """
+    client = _get_client()
+    params: dict[str, Any] = {}
+    if horizontal is not None:
+        params["horizontal"] = horizontal
+    if vertical is not None:
+        params["vertical"] = vertical
+    if page is not None:
+        params["page"] = page
+
+    result = client.send_command("set_guides", params)
+    _save_after(result)
+    parts = []
+    if result.get("horizontal") is not None:
+        parts.append(f"{len(result['horizontal'])} horizontal")
+    if result.get("vertical") is not None:
+        parts.append(f"{len(result['vertical'])} vertical")
+    return f"Set {' and '.join(parts)} guide(s)."
+
+
+@mcp.tool()
+def create_master_page(
+    name: str,
+) -> str:
+    """Create a new master page.
+
+    Args:
+        name: Master page name
+
+    """
+    client = _get_client()
+    result = client.send_command("create_master_page", {"name": name})
+    _save_after(result)
+    return f"Created master page '{result['name']}'."
+
+
+@mcp.tool()
+def edit_master_page(
+    name: str,
+) -> str:
+    """Enter editing mode for a master page.
+
+    Args:
+        name: Master page name to edit
+
+    """
+    client = _get_client()
+    result = client.send_command("edit_master_page", {"name": name})
+    _save_after(result)
+    return f"Editing master page '{result['name']}'."
+
+
+@mcp.tool()
+def close_master_page() -> str:
+    """Exit master page editing mode and return to normal editing."""
+    client = _get_client()
+    client.send_command("close_master_page", {})
+    _save_after({})
+    return "Closed master page editing."
+
+
+@mcp.tool()
+def apply_master_page(
+    master_page: str,
+    page: int,
+) -> str:
+    """Apply a master page to a document page.
+
+    Args:
+        master_page: Name of the master page to apply
+        page: Target page number (1-based)
+
+    """
+    client = _get_client()
+    result = client.send_command(
+        "apply_master_page", {"master_page": master_page, "page": page}
+    )
+    _save_after(result)
+    return f"Applied master page '{master_page}' to page {page}."
+
+
+@mcp.tool()
+def list_master_pages() -> str:
+    """List all master pages in the document."""
+    client = _get_client()
+    result = client.send_command("list_master_pages", {})
+    names = result.get("master_pages", [])
+    if names:
+        return f"Master pages: {', '.join(names)}"
+    return "No master pages defined."
 
 
 @mcp.tool()
